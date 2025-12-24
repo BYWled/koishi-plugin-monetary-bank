@@ -1,4 +1,5 @@
-import { Context, Schema, Logger } from 'koishi'
+import { Context, Schema, Logger, h } from 'koishi'
+import { getBaseTemplate, renderHeader, renderBalanceCard, renderGridItem, renderInfoRow, renderCommandGrid, renderPromptBox, renderConfirmDialog } from './templates'
 
 export const name = 'monetary-bank'
 
@@ -59,7 +60,8 @@ export const Config: Schema<Config> = Schema.object({
 
 // 依赖注入：声明插件需要的服务
 export const inject = {
-  required: ['database']  // 必须依赖数据库服务
+  required: ['database'],  // 必须依赖数据库服务
+  optional: ['puppeteer', 'monetaryBank']  // 可选依赖puppeteer和monetaryBank（热重载支持）
 }
 
 // 创建日志记录器
@@ -93,6 +95,11 @@ declare module 'koishi' {
   }
   
   interface Context {
+    monetaryBank: MonetaryBankAPI
+    puppeteer?: any  // Puppeteer 服务（可选）
+  }
+  
+  interface Services {
     monetaryBank: MonetaryBankAPI
   }
 }
@@ -719,8 +726,48 @@ export async function apply(ctx: Context, config: Config) {
 
   logSuccess('✓ monetary-bank 插件加载成功')
 
-  // 注册银行API到Context
-  ctx.monetaryBank = new MonetaryBankAPI(ctx, config)
+  // 注册银行API服务（使用provide机制，支持热重载）
+  const api = new MonetaryBankAPI(ctx, config)
+  // 避免热重载重复注册导致报错
+  const registry = (ctx as any).registry || (ctx as any).$registry
+  const alreadyProvided = !!(registry?.services?.has?.('monetaryBank'))
+
+  if (!alreadyProvided) {
+    try {
+      ctx.provide('monetaryBank', api)
+    } catch (err: any) {
+      // 热重载可能仍提示已注册，忽略即可
+      logger.warn('monetaryBank 服务已存在，跳过重新注册')
+    }
+  }
+
+  // 兼容性：同时挂载到ctx上，供内部使用
+  ctx.monetaryBank = api
+
+  // 注册主命令：银行首页
+  ctx.command('bank', '银行服务')
+    .userFields(['id'])
+    .action(async ({ session }) => {
+      const uid = session.user.id
+      const currency = config.defaultCurrency || 'coin'
+      
+      try {
+        const balance = await ctx.monetaryBank.getBalance(uid, currency)
+        const cash = await getMonetaryBalance(ctx, uid, currency) || 0
+        
+        // 使用图形化首页
+        return await renderBankHomePage(
+          session.username || session.userId,
+          balance,
+          cash,
+          currency,
+          config.enableInterest || false
+        )
+      } catch (error) {
+        logger.error('获取银行信息失败:', error)
+        return '获取银行信息失败，请稍后再试。'
+      }
+    })
 
   // 注册命令：查询存款
   ctx.command('bank.bal [currency:string]', '查询银行存款')
@@ -737,7 +784,8 @@ export async function apply(ctx: Context, config: Config) {
           return `您在银行中还没有 ${currency} 存款。`
         }
 
-        return `您的银行资产：\n总资产：${balance.total} ${currency}\n活期资产（可用）：${balance.demand} ${currency}\n不可用资产（定期）：${balance.fixed} ${currency}`
+        // 使用图形化渲染
+        return await renderBankBalanceImage(session.username || session.userId, balance, currency)
 
       } catch (error) {
         logger.error('查询存款失败:', error)
@@ -786,8 +834,19 @@ export async function apply(ctx: Context, config: Config) {
 
         // 二次确认
         if (!options?.yes) {
-          const confirmMsg = generateDepositConfirmMessage(amountNum, currency, cash)
-          await session.send(confirmMsg)
+          // 使用图形化确认页面（如果可用）
+          if (ctx.puppeteer) {
+            const confirmImage = await renderDepositConfirmPage(
+              session.username || session.userId,
+              amountNum,
+              currency,
+              cash
+            )
+            await session.send(confirmImage)
+          } else {
+            const confirmMsg = generateDepositConfirmMessage(amountNum, currency, cash)
+            await session.send(confirmMsg)
+          }
           
           const userInput = await session.prompt(30000)
           if (!userInput) return '操作超时，已取消存款。'
@@ -805,7 +864,14 @@ export async function apply(ctx: Context, config: Config) {
           return result.error || '存款失败'
         }
 
-        return `成功存入 ${amountNum} ${currency}（活期）！\n现金余额：${result.newCash} ${currency}\n银行总资产：${result.newBalance.total} ${currency}`
+        // 使用图形化界面显示成功结果
+        return await renderDepositSuccessImage(
+          session.username || session.userId,
+          amountNum,
+          currency,
+          result.newCash,
+          result.newBalance
+        )
 
       } catch (error) {
         logger.error('存款失败:', error)
@@ -853,8 +919,19 @@ export async function apply(ctx: Context, config: Config) {
 
         // 二次确认
         if (!options?.yes) {
-          const confirmMsg = generateWithdrawConfirmMessage(amountNum, currency, balance.demand)
-          await session.send(confirmMsg)
+          // 使用图形化确认页面（如果可用）
+          if (ctx.puppeteer) {
+            const confirmImage = await renderWithdrawConfirmPage(
+              session.username || session.userId,
+              amountNum,
+              currency,
+              balance.demand
+            )
+            await session.send(confirmImage)
+          } else {
+            const confirmMsg = generateWithdrawConfirmMessage(amountNum, currency, balance.demand)
+            await session.send(confirmMsg)
+          }
           
           const userInput = await session.prompt(30000)
           if (!userInput) return '操作超时，已取消取款。'
@@ -872,7 +949,14 @@ export async function apply(ctx: Context, config: Config) {
           return result.error || '取款失败'
         }
 
-        return `成功取出 ${amountNum} ${currency}！\n现金余额：${result.newCash} ${currency}\n银行总资产：${result.newBalance.total} ${currency}`
+        // 使用图形化界面显示成功结果
+        return await renderWithdrawSuccessImage(
+          session.username || session.userId,
+          amountNum,
+          currency,
+          result.newCash,
+          result.newBalance
+        )
 
       } catch (error) {
         logger.error('取款失败:', error)
@@ -898,14 +982,29 @@ export async function apply(ctx: Context, config: Config) {
         return '当前没有可用的定期存款方案。'
       }
       
-      let msg = '可选的定期存款方案：\n'
-      plans.forEach((plan, index) => {
-        const cycleText = plan.cycle === 'day' ? '日' : plan.cycle === 'week' ? '周' : '月'
-        msg += `${index + 1}. ${plan.name} - 利率：${plan.rate}% - 周期：${cycleText}\n`
-      })
-      msg += '\n请输入方案编号选择，或输入 0 取消：'
+      // 检查用户资金
+      const cash = await getMonetaryBalance(ctx, uid, currency) || 0
+      const balance = await getBankBalance(ctx, uid, currency)
       
-      await session.send(msg)
+      // 使用图形化方案选择页面（如果可用）
+      if (ctx.puppeteer) {
+        const planImage = await renderFixedPlanSelectionPage(
+          session.username || session.userId,
+          plans,
+          cash,
+          balance.demand,
+          currency
+        )
+        await session.send(planImage)
+      } else {
+        let msg = '可选的定期存款方案：\n'
+        plans.forEach((plan, index) => {
+          const cycleText = plan.cycle === 'day' ? '日' : plan.cycle === 'week' ? '周' : '月'
+          msg += `${index + 1}. ${plan.name} - 利率：${plan.rate}% - 周期：${cycleText}\n`
+        })
+        msg += '\n请输入方案编号选择，或输入 0 取消：'
+        await session.send(msg)
+      }
       
       const planInput = await session.prompt(30000)
       if (!planInput) return '操作超时，已取消。'
@@ -991,7 +1090,22 @@ export async function apply(ctx: Context, config: Config) {
         })
         
         const newBalance = await getBankBalance(ctx, uid, currency)
-        return `成功申请定期存款！\n方案：${selectedPlan.name}\n金额：${amount} ${currency}\n来源：现金 ${fromCash} + 活期 ${fromDemand}\n到期日：${settlementDate.toLocaleDateString()}\n银行总资产：${newBalance.total} ${currency}`
+        const newCash = await getMonetaryBalance(ctx, uid, currency) || 0
+        
+        // 使用图形化界面显示成功结果
+        return await renderFixedDepositSuccessImage(
+          session.username || session.userId,
+          amount,
+          currency,
+          selectedPlan.name,
+          selectedPlan.rate,
+          selectedPlan.cycle,
+          settlementDate,
+          fromCash,
+          fromDemand,
+          newCash,
+          newBalance
+        )
         
       } catch (error) {
         logger.error('定期存款失败:', error)
@@ -1023,20 +1137,13 @@ export async function apply(ctx: Context, config: Config) {
           return '您没有定期存款记录。'
         }
         
-        let msg = '您的定期存款：\n'
-        fixedRecords.forEach((record, index) => {
-          const cycleText = record.cycle === 'day' ? '日' : record.cycle === 'week' ? '周' : '月'
-          const currentPlan = `${record.rate}%/${cycleText}`
-          let status = '[未延期]'
-          if (record.extendRequested && record.nextRate !== undefined && record.nextCycle) {
-            const nextCycleText = record.nextCycle === 'day' ? '日' : record.nextCycle === 'week' ? '周' : '月'
-            status = `[已延期至: ${record.nextRate}%/${nextCycleText}]`
-          }
-          msg += `${index + 1}. ${currentPlan} -【 ${record.amount} ${currency} 】- 到期：${new Date(record.settlementDate).toLocaleDateString()} ${status}\n`
-        })
-        msg += '\n请输入编号管理，或输入 0 退出：'
-        
-        await session.send(msg)
+        // 使用图形化界面显示列表
+        await session.send(await renderFixedDepositListImage(
+          session.username || session.userId,
+          fixedRecords,
+          currency
+        ))
+        await session.send('请输入编号管理，或输入 0 退出：')
         
         const input = await session.prompt(30000)
         if (!input) return '操作超时。'
@@ -1049,30 +1156,43 @@ export async function apply(ctx: Context, config: Config) {
         
         // 显示操作选项
         if (selectedRecord.extendRequested) {
-          const nextCycleText = selectedRecord.nextCycle === 'day' ? '日' : selectedRecord.nextCycle === 'week' ? '周' : '月'
-          await session.send(`当前已申请延期至：${selectedRecord.nextRate}%/${nextCycleText}\n输入 1 取消延期申请，输入 0 返回：`)
+          // 图形化取消延期确认页面
+          const cycleText = selectedRecord.nextCycle === 'day' ? '日' : selectedRecord.nextCycle === 'week' ? '周' : '月'
+          await session.send(await renderCancelExtensionPage(
+            session.username || session.userId,
+            selectedRecord.amount,
+            currency,
+            `${selectedRecord.nextRate}% / ${cycleText}`
+          ))
+          
           const action = await session.prompt(30000)
-          if (!action || action.trim() === '0') return '已返回。'
-          
-          if (action.trim() === '1') {
-            await ctx.database.set('monetary_bank_int', { id: selectedRecord.id }, {
-              extendRequested: false,
-              nextRate: null,
-              nextCycle: null
-            })
-            return '已取消延期申请，到期后将自动转为活期。'
+          if (!action) return '操作超时。'
+          if (action.trim().toLowerCase() !== 'yes' && action.trim().toLowerCase() !== 'y') {
+            return '已取消操作。'
           }
-        } else {
-          // 显示可选的续期方案
-          const plans = config.fixedInterest || []
-          let planMsg = '可选的续期方案：\n'
-          plans.forEach((plan, index) => {
-            const cycleText = plan.cycle === 'day' ? '日' : plan.cycle === 'week' ? '周' : '月'
-            planMsg += `${index + 1}. ${plan.name} - 利率：${plan.rate}% - 周期：${cycleText}\n`
-          })
-          planMsg += '\n请输入方案编号申请延期，或输入 0 返回：'
           
-          await session.send(planMsg)
+          await ctx.database.set('monetary_bank_int', { id: selectedRecord.id }, {
+            extendRequested: false,
+            nextRate: null,
+            nextCycle: null
+          })
+          
+          return await renderExtensionSuccessPage(
+            session.username || session.userId,
+            'cancel',
+            selectedRecord.amount,
+            currency
+          )
+        } else {
+          // 图形化延期方案选择
+          const plans = config.fixedInterest || []
+          await session.send(await renderExtensionPlanSelectionPage(
+            session.username || session.userId,
+            plans,
+            selectedRecord.amount,
+            currency
+          ))
+          
           const planInput = await session.prompt(30000)
           if (!planInput) return '操作超时。'
           
@@ -1088,7 +1208,15 @@ export async function apply(ctx: Context, config: Config) {
             nextCycle: newPlan.cycle as any
           })
           
-          return `已申请延期！到期后将按：${newPlan.name}（利率 ${newPlan.rate}%）继续存款。`
+          return await renderExtensionSuccessPage(
+            session.username || session.userId,
+            'apply',
+            selectedRecord.amount,
+            currency,
+            newPlan.name,
+            newPlan.rate,
+            newPlan.cycle
+          )
         }
         
       } catch (error) {
@@ -1100,5 +1228,471 @@ export async function apply(ctx: Context, config: Config) {
   // 启动利息结算定时任务
   if (config.enableInterest) {
     await scheduleInterestSettlement(ctx, config)
+  }
+
+  // --- 图形渲染函数 ---
+
+  /**
+   * 通用图片渲染函数
+   */
+  async function renderToImage(html: string, fallbackText: string) {
+    if (!ctx.puppeteer) {
+      return fallbackText
+    }
+
+    try {
+      const page = await ctx.puppeteer.page()
+      await page.setContent(html, { waitUntil: 'networkidle0' })
+      const element = await page.$('.container')
+      const screenshot = await element.screenshot({ type: 'png' })
+      await page.close()
+      return h.image(screenshot, 'image/png')
+    } catch (error) {
+      logger.error('图形渲染失败:', error)
+      return fallbackText
+    }
+  }
+
+  /**
+   * 渲染银行首页
+   */
+  async function renderBankHomePage(
+    username: string,
+    balance: { total: number; demand: number; fixed: number },
+    cash: number,
+    currency: string,
+    interestEnabled: boolean
+  ) {
+    const commands = [
+      { icon: '💰', name: 'bank.bal', desc: '查询存款余额' },
+      { icon: '📥', name: 'bank.in', desc: '存入现金' },
+      { icon: '📤', name: 'bank.out', desc: '取出现金' }
+    ]
+    
+    if (interestEnabled) {
+      commands.push(
+        { icon: '🔒', name: 'bank.fixed', desc: '申请定期存款' },
+        { icon: '⚙️', name: 'bank.fixed.manage', desc: '管理定期存款' }
+      )
+    }
+
+    const content = `
+      ${renderHeader('🏦', '欢迎使用银行', username)}
+      
+      <div class="grid">
+        ${renderGridItem('💵', '现金余额', cash, '可用于存款', 'cash')}
+        ${renderGridItem('🏦', '银行总资产', balance.total, `活期 ${balance.demand} + 定期 ${balance.fixed}`, 'bank')}
+      </div>
+      
+      ${renderPromptBox('可用命令', '点击下方命令查看详情或直接输入使用', 'info')}
+      
+      ${renderCommandGrid(commands)}
+    `
+
+    const html = getBaseTemplate(content, 800)
+    const fallback = `🏦 银行服务中心\n\n账户信息：\n现金：${cash} ${currency}\n银行总资产：${balance.total} ${currency}\n  - 活期：${balance.demand} ${currency}\n  - 定期：${balance.fixed} ${currency}\n\n可用命令：\n${commands.map(c => `${c.icon} ${c.name} - ${c.desc}`).join('\n')}`
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染存款确认页面
+   */
+  async function renderDepositConfirmPage(
+    username: string,
+    amount: number,
+    currency: string,
+    cash: number
+  ) {
+    const content = `
+      ${renderHeader('💰', '存款确认', username)}
+      
+      ${renderConfirmDialog('请确认存款信息', [
+        { label: '存款金额', value: `${amount.toLocaleString()} ${currency}` },
+        { label: '存款类型', value: '活期存款' },
+        { label: '当前现金', value: `${cash.toLocaleString()} ${currency}` },
+        { label: '存款后现金', value: `${(cash - amount).toLocaleString()} ${currency}` }
+      ])}
+      
+      ${renderPromptBox('温馨提示', '存入后将自动转为活期存款，可随时取出', 'info')}
+    `
+
+    const html = getBaseTemplate(content)
+    const fallback = generateDepositConfirmMessage(amount, currency, cash)
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染取款确认页面
+   */
+  async function renderWithdrawConfirmPage(
+    username: string,
+    amount: number,
+    currency: string,
+    balance: number
+  ) {
+    const content = `
+      ${renderHeader('💸', '取款确认', username)}
+      
+      ${renderConfirmDialog('请确认取款信息', [
+        { label: '取款金额', value: `${amount.toLocaleString()} ${currency}` },
+        { label: '取款来源', value: '活期存款' },
+        { label: '当前活期', value: `${balance.toLocaleString()} ${currency}` },
+        { label: '取款后活期', value: `${(balance - amount).toLocaleString()} ${currency}` }
+      ])}
+      
+      ${renderPromptBox('温馨提示', '仅可从活期存款中取出，定期需到期后自动转活期', 'warning')}
+    `
+
+    const html = getBaseTemplate(content)
+    const fallback = generateWithdrawConfirmMessage(amount, currency, balance)
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染银行余额信息为HTML图片
+   */
+  async function renderBankBalanceImage(
+    username: string,
+    balance: { total: number; demand: number; fixed: number },
+    currency: string
+  ) {
+    const demandPercent = balance.total > 0 ? (balance.demand / balance.total * 100).toFixed(1) : '0'
+    const fixedPercent = balance.total > 0 ? (balance.fixed / balance.total * 100).toFixed(1) : '0'
+
+    const content = `
+      ${renderHeader('🏦', '银行资产', username)}
+      ${renderBalanceCard('总资产', balance.total, currency)}
+      <div class="grid">
+        ${renderGridItem('💵', '可用资产（活期）', balance.demand, `占比 ${demandPercent}%`, 'demand')}
+        ${renderGridItem('🔒', '不可用资产（定期）', balance.fixed, `占比 ${fixedPercent}%`, 'fixed')}
+      </div>
+    `
+
+    const html = getBaseTemplate(content)
+    const fallback = `您的银行资产：\n总资产：${balance.total} ${currency}\n可用资产（活期）：${balance.demand} ${currency}\n不可用资产（定期）：${balance.fixed} ${currency}`
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染存款成功页面
+   */
+  async function renderDepositSuccessImage(
+    username: string,
+    amount: number,
+    currency: string,
+    newCash: number,
+    newBalance: { total: number; demand: number; fixed: number }
+  ) {
+    const content = `
+      ${renderHeader('💰', '存款成功', username)}
+      ${renderBalanceCard('存入金额', amount, currency)}
+      <div class="card success">
+        ${renderInfoRow('存款类型', '活期存款')}
+        ${renderInfoRow('当前现金', `${newCash.toLocaleString()} ${currency}`)}
+        ${renderInfoRow('银行总资产', `${newBalance.total.toLocaleString()} ${currency}`, 'success')}
+      </div>
+      <div class="grid">
+        ${renderGridItem('💵', '活期资产', newBalance.demand, '可随时取出', 'demand')}
+        ${renderGridItem('🔒', '定期资产', newBalance.fixed, '到期自动转活期', 'fixed')}
+      </div>
+    `
+
+    const html = getBaseTemplate(content)
+    const fallback = `成功存入 ${amount} ${currency}（活期）！\n现金余额：${newCash} ${currency}\n银行总资产：${newBalance.total} ${currency}`
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染取款成功页面
+   */
+  async function renderWithdrawSuccessImage(
+    username: string,
+    amount: number,
+    currency: string,
+    newCash: number,
+    newBalance: { total: number; demand: number; fixed: number }
+  ) {
+    const content = `
+      ${renderHeader('💸', '取款成功', username)}
+      ${renderBalanceCard('取出金额', amount, currency)}
+      <div class="card success">
+        ${renderInfoRow('取款来源', '活期存款')}
+        ${renderInfoRow('当前现金', `${newCash.toLocaleString()} ${currency}`, 'success')}
+        ${renderInfoRow('银行总资产', `${newBalance.total.toLocaleString()} ${currency}`)}
+      </div>
+      <div class="grid">
+        ${renderGridItem('💰', '现金余额', newCash, '可用于消费', 'cash')}
+        ${renderGridItem('🏦', '银行余额', newBalance.total, '继续生息', 'bank')}
+      </div>
+    `
+
+    const html = getBaseTemplate(content)
+    const fallback = `成功取出 ${amount} ${currency}！\n现金余额：${newCash} ${currency}\n银行总资产：${newBalance.total} ${currency}`
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染定期存款列表
+   */
+  async function renderFixedDepositListImage(
+    username: string,
+    records: any[],
+    currency: string
+  ) {
+    let listHtml = ''
+    records.forEach((record, index) => {
+      const cycleText = record.cycle === 'day' ? '日' : record.cycle === 'week' ? '周' : '月'
+      const statusText = record.extendRequested ? '已申请延期' : '未延期'
+      const statusClass = record.extendRequested ? 'pending' : 'active'
+      const dueDate = new Date(record.settlementDate).toLocaleDateString()
+      
+      listHtml += `
+        <div class="list-item">
+          <div class="list-left">
+            <div class="list-title">${index + 1}. ${record.rate}% / ${cycleText}</div>
+            <div class="list-subtitle">到期日：${dueDate}</div>
+          </div>
+          <div class="list-right">
+            <div class="list-amount">${record.amount.toLocaleString()} ${currency}</div>
+            <span class="list-status ${statusClass}">${statusText}</span>
+          </div>
+        </div>
+      `
+    })
+
+    const totalAmount = records.reduce((sum, r) => sum + r.amount, 0)
+
+    const content = `
+      ${renderHeader('📋', '定期存款管理', username)}
+      ${renderBalanceCard('定期总额', totalAmount, currency)}
+      ${renderPromptBox('管理说明', '请输入编号选择要管理的定期存款，输入 0 退出', 'info')}
+      <div style="margin-bottom: 20px;">
+        ${listHtml}
+      </div>
+    `
+
+    const html = getBaseTemplate(content, 900)
+    const fallback = '您的定期存款：\n' + records.map((r, i) => 
+      `${i+1}. ${r.rate}%/${r.cycle} - ${r.amount} ${currency}`
+    ).join('\n')
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染定期申请方案选择页面
+   */
+  async function renderFixedPlanSelectionPage(
+    username: string,
+    plans: Array<{ name?: string; rate?: number; cycle?: 'day' | 'week' | 'month' }>,
+    cash: number,
+    demand: number,
+    currency: string
+  ) {
+    const planItems = plans.map((plan, index) => {
+      const cycleText = plan.cycle === 'day' ? '日' : plan.cycle === 'week' ? '周' : '月'
+      return `
+        <div class="list-item">
+          <div class="list-left">
+            <div class="list-title">${index + 1}. ${plan.name || '未命名'}</div>
+            <div class="list-subtitle">利率：${plan.rate || 0}% / 周期：${cycleText}</div>
+          </div>
+          <div class="list-right">
+            <span class="list-status active">可选</span>
+          </div>
+        </div>
+      `
+    }).join('')
+
+    const content = `
+      ${renderHeader('🔒', '申请定期存款', username)}
+      
+      <div class="grid">
+        ${renderGridItem('💵', '可用现金', cash, '优先扣除', 'cash')}
+        ${renderGridItem('🏦', '活期存款', demand, '现金不足时扣除', 'demand')}
+      </div>
+      
+      ${renderPromptBox('方案选择', '请输入方案编号，或输入 0 取消', 'info')}
+      
+      <div style="margin-bottom: 20px;">
+        ${planItems}
+      </div>
+    `
+
+    const html = getBaseTemplate(content, 900)
+    const fallback = '可选方案：\n' + plans.map((p, i) => 
+      `${i+1}. ${p.name} - ${p.rate}% / ${p.cycle}`
+    ).join('\n')
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染定期存款成功页面
+   */
+  async function renderFixedDepositSuccessImage(
+    username: string,
+    amount: number,
+    currency: string,
+    planName: string,
+    rate: number,
+    cycle: 'day' | 'week' | 'month',
+    settlementDate: Date,
+    fromCash: number,
+    fromDemand: number,
+    newCash: number,
+    newBalance: { total: number; demand: number; fixed: number }
+  ) {
+    const cycleText = cycle === 'day' ? '日' : cycle === 'week' ? '周' : '月'
+    const dueDate = settlementDate.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
+
+    const content = `
+      ${renderHeader('🔒', '定期存款成功', username)}
+      ${renderBalanceCard('存入金额', amount, currency)}
+      
+      <div class="card success">
+        ${renderInfoRow('存款方案', `${planName} (${rate}% / ${cycleText})`, 'success')}
+        ${renderInfoRow('资金来源', `现金 ${fromCash.toLocaleString()} + 活期 ${fromDemand.toLocaleString()}`)}
+        ${renderInfoRow('到期日期', dueDate)}
+      </div>
+      
+      <div class="grid">
+        ${renderGridItem('💵', '当前现金', newCash, '可用于消费', 'cash')}
+        ${renderGridItem('🏦', '银行总资产', newBalance.total, `活期 ${newBalance.demand} + 定期 ${newBalance.fixed}`, 'bank')}
+      </div>
+      
+      ${renderPromptBox('温馨提示', '定期存款到期后将自动转为活期，或可在管理中申请延期续存', 'info')}
+    `
+
+    const html = getBaseTemplate(content)
+    const fallback = `成功申请定期存款！\n方案：${planName}\n金额：${amount} ${currency}\n利率：${rate}% / ${cycleText}\n来源：现金 ${fromCash} + 活期 ${fromDemand}\n到期日：${dueDate}\n银行总资产：${newBalance.total} ${currency}`
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染延期方案选择页面
+   */
+  async function renderExtensionPlanSelectionPage(
+    username: string,
+    plans: Array<{ name?: string; rate?: number; cycle?: 'day' | 'week' | 'month' }>,
+    currentAmount: number,
+    currency: string
+  ) {
+    const planItems = plans.map((plan, index) => {
+      const cycleText = plan.cycle === 'day' ? '日' : plan.cycle === 'week' ? '周' : '月'
+      return `
+        <div class="list-item">
+          <div class="list-left">
+            <div class="list-title">${index + 1}. ${plan.name || '未命名'}</div>
+            <div class="list-subtitle">利率 ${plan.rate || 0}% / 周期 ${cycleText}</div>
+          </div>
+          <div class="list-right">
+            <span class="list-status active">可选</span>
+          </div>
+        </div>
+      `
+    }).join('')
+
+    const content = `
+      ${renderHeader('⚙️', '申请延期续存', username)}
+      ${renderBalanceCard('当前定期金额', currentAmount, currency)}
+      ${renderPromptBox('延期说明', '到期后将按选择的新方案继续存款，本金+利息自动续存', 'info')}
+      <div style="margin-bottom: 20px;">
+        ${planItems}
+      </div>
+      ${renderPromptBox('操作提示', '请输入方案编号，或输入 0 返回', 'warning')}
+    `
+
+    const html = getBaseTemplate(content, 800)
+    const fallback = '可选续期方案：\n' + plans.map((p, i) => 
+      `${i+1}. ${p.name} - ${p.rate}% / ${p.cycle === 'day' ? '日' : p.cycle === 'week' ? '周' : '月'}`
+    ).join('\n')
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染取消延期确认页面
+   */
+  async function renderCancelExtensionPage(
+    username: string,
+    amount: number,
+    currency: string,
+    currentPlan: string
+  ) {
+    const content = `
+      ${renderHeader('⚠️', '取消延期申请', username)}
+      ${renderBalanceCard('定期金额', amount, currency)}
+      
+      ${renderConfirmDialog('请确认取消延期', [
+        { label: '当前延期方案', value: currentPlan },
+        { label: '取消后处理', value: '到期自动转为活期' },
+        { label: '是否确认取消', value: '请输入 yes 或 y 确认' }
+      ])}
+      
+      ${renderPromptBox('注意', '取消后，定期存款到期将自动转为活期存款', 'warning')}
+    `
+
+    const html = getBaseTemplate(content)
+    const fallback = `当前已申请延期至：${currentPlan}\n取消后到期将自动转为活期\n确认取消请输入 yes 或 y`
+    
+    return await renderToImage(html, fallback)
+  }
+
+  /**
+   * 渲染延期操作成功页面
+   */
+  async function renderExtensionSuccessPage(
+    username: string,
+    action: 'apply' | 'cancel',
+    amount: number,
+    currency: string,
+    planName?: string,
+    rate?: number,
+    cycle?: 'day' | 'week' | 'month'
+  ) {
+    if (action === 'cancel') {
+      const content = `
+        ${renderHeader('✅', '取消成功', username)}
+        ${renderBalanceCard('定期金额', amount, currency)}
+        
+        <div class="card success">
+          ${renderInfoRow('操作结果', '已取消延期申请', 'success')}
+          ${renderInfoRow('到期处理', '自动转为活期存款')}
+        </div>
+        
+        ${renderPromptBox('提示', '到期后本金+利息将转入活期账户，可随时取出', 'info')}
+      `
+
+      const html = getBaseTemplate(content)
+      const fallback = `已取消延期申请\n定期金额：${amount} ${currency}\n到期后将自动转为活期`
+      
+      return await renderToImage(html, fallback)
+    } else {
+      const cycleText = cycle === 'day' ? '日' : cycle === 'week' ? '周' : '月'
+      const content = `
+        ${renderHeader('✅', '延期申请成功', username)}
+        ${renderBalanceCard('定期金额', amount, currency)}
+        
+        <div class="card success">
+          ${renderInfoRow('延期方案', `${planName} (${rate}% / ${cycleText})`, 'success')}
+          ${renderInfoRow('到期处理', '按新方案自动续存')}
+        </div>
+        
+        ${renderPromptBox('提示', '到期后本金+利息将按新方案继续存入定期', 'info')}
+      `
+
+      const html = getBaseTemplate(content)
+      const fallback = `延期申请成功！\n方案：${planName}\n利率：${rate}% / ${cycleText}\n定期金额：${amount} ${currency}`
+      
+      return await renderToImage(html, fallback)
+    }
   }
 }
