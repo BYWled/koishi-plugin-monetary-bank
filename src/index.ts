@@ -6,16 +6,55 @@ export const name = 'monetary-bank'
 export interface Config {
   defaultCurrency?: string  // 默认货币名称
   debug?: boolean
+  enableInterest?: boolean  // 是否启用定期利息功能
+  demandInterest?: {
+    enabled?: boolean  // 活期利息是否启用
+    rate?: number  // 活期利率（百分比）
+    cycle?: 'day' | 'week' | 'month'  // 结算周期
+  }
+  fixedInterest?: Array<{
+    name?: string  // 方案名称
+    rate?: number  // 利率（百分比）
+    cycle?: 'day' | 'week' | 'month'  // 结算周期
+  }>
 }
 
 // 配置项定义
 export const Config: Schema<Config> = Schema.object({
   defaultCurrency: Schema.string()
     .description('默认货币名称')
-    .default('coin')
-  , debug: Schema.boolean()
+    .default('coin'),
+  debug: Schema.boolean()
     .description('开启调试日志（显示 info/success 等非 error/warn 日志）')
-    .default(true)
+    .default(true),
+  enableInterest: Schema.boolean()
+    .description('是否启用定期利息功能')
+    .default(false),
+  demandInterest: Schema.object({
+    enabled: Schema.boolean()
+      .description('是否启用活期利息')
+      .default(true),
+    rate: Schema.number()
+      .description('活期利率（%）')
+      .default(0.25),
+    cycle: Schema.union(['day', 'week', 'month'])
+      .description('结算周期（day=日，week=周，month=月）')
+      .default('day')
+  }).description('活期利息配置'),
+  fixedInterest: Schema.array(Schema.object({
+    name: Schema.string()
+      .description('方案名称')
+      .required(),
+    rate: Schema.number()
+      .description('利率（%）')
+      .required(),
+    cycle: Schema.union(['day', 'week', 'month'])
+      .description('结算周期（day=日，week=周，month=月）')
+      .required()
+  })).description('定期利息方案配置').default([
+    { name: '周定期', rate: 4.35, cycle: 'week' },
+    { name: '月定期', rate: 50, cycle: 'month' }
+  ])
 })
 
 // 依赖注入：声明插件需要的服务
@@ -45,140 +84,52 @@ function logSuccess(...args: any[]) {
 }
 
 /**
- * 数据库表结构声明（仅作类型提示）
- * 表 `monetary_bank` 用于记录插件内的银行账户余额信息。
- * 字段约定：
- *  - uid: 用户唯一 ID（由上层用户系统提供）
- *  - currency: 货币标识（例如 "coin"）
- *  - value: 存款数值（数值类型）
- * 注意：此处为类型声明与文档说明，不会主动修改数据库结构。
+ * 数据库表结构声明
+ * monetary_bank_int 表用于记录所有存款（活期和定期）
  */
 declare module 'koishi' {
   interface Tables {
-    monetary_bank: MonetaryBank
+    monetary_bank_int: MonetaryBankInterest
   }
 }
 
-export interface MonetaryBank {
-  uid: number       // 用户ID，用于匹配用户
+/**
+ * 利息记录表结构
+ * 用于记录每笔存款的利息计算信息（活期和定期）
+ */
+export interface MonetaryBankInterest {
+  id: number        // 自增主键
+  uid: number       // 用户ID
   currency: string  // 货币类型
-  value: number     // 存款数额
+  amount: number    // 本金金额
+  type: 'demand' | 'fixed'  // 类型：demand=活期，fixed=定期
+  rate: number      // 利率（百分比）
+  cycle: 'day' | 'week' | 'month'  // 结算周期
+  settlementDate: Date  // 下次结算日期
+  extendRequested: boolean  // 是否申请延期（仅定期有效）
+  nextRate?: number  // 延期后使用的利率（仅定期有效）
+  nextCycle?: 'day' | 'week' | 'month'  // 延期后使用的周期（仅定期有效）
 }
 
 /**
- * 初始化并校验数据库模型
- * 说明：
- *  - 在插件加载时检查是否存在 `monetary_bank` 表；若不存在则调用 `ctx.model.extend` 创建表模型。
- *  - 若表已存在，尝试对其字段做宽松校验并打印调试信息以便诊断，但不会强制修改已有表结构。
- * 返回值：
- *  - true: 初始化与校验通过，插件可以继续加载
- *  - false: 校验失败或发生异常，调用方应中止插件加载以避免潜在的数据损坏
+ * 初始化数据库模型
+ * 创建 monetary_bank_int 表用于存储所有存款记录（活期和定期）
  */
 async function initDatabase(ctx: Context): Promise<boolean> {
   try {
-    // 获取所有表信息
     const tables = await ctx.database.tables
 
-    // 检查 monetary_bank 表是否存在
-    if (tables && 'monetary_bank' in tables) {
-      logInfo('检测到 monetary_bank 表已存在，正在验证表结构...')
-
-      // 获取表结构定义（兼容不同数据源返回的多种格式）
-      const tableFields = tables['monetary_bank']
-
-      // 将 tableFields 规范化为 { columnName: typeString }
-      const normalizeColumns = (raw: any): Record<string, string> => {
-        const map: Record<string, string> = {}
-        if (!raw) return map
-        // 情况 1: 数组 [{ name, type }, ...]
-        if (Array.isArray(raw)) {
-          for (const col of raw) {
-            if (!col) continue
-            if (col.name && col.type) map[col.name] = String(col.type)
-            else if (col.field && col.type) map[col.field] = String(col.type)
-            else if (typeof col === 'string') map[col] = 'unknown'
-          }
-          return map
-        }
-        // 情况 2: 对象 { columns: { name: { type } } }
-        if (raw.columns && typeof raw.columns === 'object') {
-          for (const [k, v] of Object.entries(raw.columns)) {
-            if (v && typeof v === 'object') {
-              // 使用类型断言并安全读取常见字段
-              const vv = v as any
-              map[k] = (vv.type || vv.dataType || vv.typeName || JSON.stringify(vv)).toString()
-            } else {
-              map[k] = String(v)
-            }
-          }
-          return map
-        }
-        // 情况 3: 直接映射 { name: { type } }
-        if (typeof raw === 'object') {
-          for (const [k, v] of Object.entries(raw)) {
-            if (v && typeof v === 'object') {
-              // 常见 shape: { type: 'string' } 或 { type: { name: 'varchar' } }
-              if ((v as any).type && typeof (v as any).type === 'string') map[k] = (v as any).type
-              else if ((v as any).type && typeof (v as any).type === 'object') map[k] = JSON.stringify((v as any).type)
-              else if ((v as any).dataType) map[k] = (v as any).dataType
-              else map[k] = JSON.stringify(v)
-            } else {
-              map[k] = String(v)
-            }
-          }
-          return map
-        }
-        return map
-      }
-
-      const columns = normalizeColumns(tableFields)
-
-      // 调试信息：记录原始表结构（便于诊断）
-      logInfo('monetary_bank 表结构（规范化）:', columns)
-
-      // // 验证必需字段是否存在且类型正确（使用宽松匹配）
-      // const requiredFields = {
-      //   uid: 'integer',      // uid 应该是整数类型
-      //   currency: 'string',  // currency 应该是字符串类型
-      //   value: 'number'      // value 应该是数值类型
-      // }
-
-      let structureValid = true
-      const missingFields: string[] = []
-      const incompatibleFields: string[] = []
-
-      // const detectType = (rawType: string | undefined): string => {
-      //   if (!rawType) return 'unknown'
-      //   const t = rawType.toLowerCase()
-      //   if (t.includes('int') || t.includes('unsigned') || t.includes('number')) return 'integer'
-      //   if (t.includes('char') || t.includes('text') || t.includes('string') || t.includes('varchar')) return 'string'
-      //   if (t.includes('float') || t.includes('double') || t.includes('real') || t.includes('decimal')) return 'number'
-      //   return 'unknown'
-      // }
-
-      // 如果表结构不正确，发出警告并阻止加载
-      if (!structureValid) {
-        logger.error('❌ monetary_bank 表结构与插件要求不一致！')
-        if (missingFields.length > 0) {
-          logger.error(`  缺少字段: ${missingFields.join(', ')}`)
-        }
-        if (incompatibleFields.length > 0) {
-          logger.error(`  字段类型不兼容: ${incompatibleFields.join(', ')}`)
-        }
-        logger.error('  插件将不会加载以防止数据损坏。')
-        logger.error('  请检查数据库表结构或删除现有表后重启插件。')
-        return false
-      }
-
-      logSuccess('✓ 表结构验证通过')
-      return true
-
+    // 检查并创建 monetary_bank_int 表
+    if (tables && 'monetary_bank_int' in tables) {
+      logInfo('检测到 monetary_bank_int 表已存在')
     } else {
-      // 表不存在，创建新表
-      logInfo('monetary_bank 表不存在，正在创建...')
-
-      // 扩展数据库模型，定义表结构
-      ctx.model.extend('monetary_bank', {
+      logInfo('monetary_bank_int 表不存在，正在创建...')
+      
+      ctx.model.extend('monetary_bank_int', {
+        id: {
+          type: 'unsigned',
+          nullable: false,
+        },
         uid: {
           type: 'unsigned',
           nullable: false,
@@ -187,18 +138,47 @@ async function initDatabase(ctx: Context): Promise<boolean> {
           type: 'string',
           nullable: false,
         },
-        value: {
+        amount: {
           type: 'unsigned',
           nullable: false,
+        },
+        type: {
+          type: 'string',
+          nullable: false,
+        },
+        rate: {
+          type: 'double',
+          nullable: false,
+        },
+        cycle: {
+          type: 'string',
+          nullable: false,
+        },
+        settlementDate: {
+          type: 'timestamp',
+          nullable: false,
+        },
+        extendRequested: {
+          type: 'boolean',
+          nullable: false,
+        },
+        nextRate: {
+          type: 'double',
+          nullable: true,
+        },
+        nextCycle: {
+          type: 'string',
+          nullable: true,
         }
       }, {
-        primary: ['uid', 'currency'],  // 联合主键：用户ID + 货币类型
-        autoInc: false  // 不自增
+        primary: 'id',
+        autoInc: true
       })
-
-      logSuccess('✓ monetary_bank 表创建成功')
-      return true
+      
+      logSuccess('✓ monetary_bank_int 表创建成功')
     }
+
+    return true
 
   } catch (error) {
     logger.error('初始化数据库时发生错误:', error)
@@ -245,7 +225,7 @@ async function findMonetaryRecord(ctx: Context, uid: number, currency: string): 
  * 行为说明：
  *  - 尝试使用常见字段插入记录（优先使用 uid，其次尝试 id）以兼容不同项目的表结构
  *  - 插入成功返回 true；所有尝试失败则返回 false（调用者可据此决定是否继续）
- * 注意：此函数只创建最小字段集，不会对外部表结构做额外假设或变更。
+ * 注意：此函数只创建最小字段集，不会对外部表结构做额外假设或变更
  */
 async function createMonetaryUser(ctx: Context, uid: number, currency: string): Promise<boolean> {
   const attempts = [
@@ -323,6 +303,205 @@ async function changeMonetary(ctx: Context, uid: number, currency: string, delta
 }
 
 /**
+ * 计算下次结算日期（T+1方案）
+ * @param cycle 结算周期
+ * @param isNew 是否为新存款（新存款使用T+1）
+ * @returns 下次结算日期
+ */
+function calculateNextSettlementDate(cycle: 'day' | 'week' | 'month', isNew: boolean = false): Date {
+  const now = new Date()
+  const settlement = new Date(now)
+  
+  // 设置为当天0点
+  settlement.setHours(0, 0, 0, 0)
+  
+  // 新存款T+1，从明天开始计算
+  if (isNew) {
+    settlement.setDate(settlement.getDate() + 1)
+  }
+  
+  // 根据周期计算下次结算日期
+  switch (cycle) {
+    case 'day':
+      settlement.setDate(settlement.getDate() + 1)
+      break
+    case 'week':
+      settlement.setDate(settlement.getDate() + 7)
+      break
+    case 'month':
+      settlement.setDate(settlement.getDate() + 30)
+      break
+  }
+  
+  return settlement
+}
+
+/**
+ * 利息结算定时任务
+ * 每日0点检查并结算到期的利息
+ */
+async function scheduleInterestSettlement(ctx: Context, config: Config) {
+  if (!config.enableInterest) return
+  
+  // 计算距离明天0点的毫秒数
+  function getMillisecondsUntilMidnight(): number {
+    const now = new Date()
+    const tomorrow = new Date(now)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    tomorrow.setHours(0, 0, 0, 0)
+    return tomorrow.getTime() - now.getTime()
+  }
+  
+  // 立即执行一次结算检查
+  async function performSettlement() {
+    try {
+      logInfo('开始执行利息结算任务...')
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      
+      // 查询今天需要结算的记录
+      const records = await ctx.database.get('monetary_bank_int', {})
+      
+      for (const record of records) {
+        const settlementDate = new Date(record.settlementDate)
+        settlementDate.setHours(0, 0, 0, 0)
+        
+        // 如果结算日期是今天或之前
+        if (settlementDate <= today) {
+          await settleInterest(ctx, config, record)
+        }
+      }
+      
+      logSuccess('利息结算任务执行完成')
+    } catch (error) {
+      logger.error('利息结算任务执行失败:', error)
+    }
+  }
+  
+  // 首次延迟到明天0点执行
+  setTimeout(async () => {
+    await performSettlement()
+    
+    // 之后每24小时执行一次
+    setInterval(async () => {
+      await performSettlement()
+    }, 24 * 60 * 60 * 1000)
+  }, getMillisecondsUntilMidnight())
+  
+  logInfo('利息结算定时任务已启动，将在每日0点执行')
+}
+
+/**
+ * 结算单条利息记录
+ */
+async function settleInterest(ctx: Context, config: Config, record: MonetaryBankInterest) {
+  try {
+    // 计算利息
+    const interest = Math.floor(record.amount * record.rate / 100)
+    
+    if (record.type === 'demand') {
+      // 活期：利滚利，更新本金和下次结算日期
+      const newAmount = record.amount + interest
+      const nextSettlement = calculateNextSettlementDate(record.cycle, false)
+      
+      await ctx.database.set('monetary_bank_int', { id: record.id }, {
+        amount: newAmount,
+        settlementDate: nextSettlement
+      })
+      
+      logInfo(`活期利息结算: uid=${record.uid}, 本金=${record.amount}, 利息=${interest}, 新本金=${newAmount}`)
+    } else {
+      // 定期
+      if (record.extendRequested && record.nextRate !== undefined && record.nextCycle) {
+        // 申请了延期，使用新利率和周期继续
+        const newAmount = record.amount + interest
+        const nextSettlement = calculateNextSettlementDate(record.nextCycle, false)
+        
+        await ctx.database.set('monetary_bank_int', { id: record.id }, {
+          amount: newAmount,
+          rate: record.nextRate,
+          cycle: record.nextCycle,
+          settlementDate: nextSettlement,
+          extendRequested: false,
+          nextRate: null,
+          nextCycle: null
+        })
+        
+        logInfo(`定期延期结算: uid=${record.uid}, 本金=${record.amount}, 利息=${interest}, 新本金=${newAmount}, 新利率=${record.nextRate}%, 新周期=${record.nextCycle}`)
+      } else {
+        // 未延期，转为活期
+        await ctx.database.remove('monetary_bank_int', { id: record.id })
+        
+        // 本金+利息转为活期
+        const totalAmount = record.amount + interest
+        const demandConfig = config.demandInterest || { enabled: true, rate: 0.25, cycle: 'day' }
+        
+        if (demandConfig.enabled) {
+          const nextSettlement = calculateNextSettlementDate(demandConfig.cycle as any, false)
+          
+          await ctx.database.create('monetary_bank_int', {
+            uid: record.uid,
+            currency: record.currency,
+            amount: totalAmount,
+            type: 'demand',
+            rate: demandConfig.rate,
+            cycle: demandConfig.cycle as any,
+            settlementDate: nextSettlement,
+            extendRequested: false
+          })
+        }
+        
+        logInfo(`定期到期结算: uid=${record.uid}, 本金=${record.amount}, 利息=${interest}, 转活期=${totalAmount}`)
+      }
+    }
+  } catch (error) {
+    logger.error(`结算利息失败 id=${record.id}:`, error)
+  }
+}
+
+/**
+ * 计算用户银行总余额（通过 int 表聚合）
+ */
+async function getBankBalance(ctx: Context, uid: number, currency: string): Promise<{ total: number; demand: number; fixed: number }> {
+  const records = await ctx.database.get('monetary_bank_int', { uid, currency })
+  
+  let demand = 0
+  let fixed = 0
+  
+  for (const record of records) {
+    if (record.type === 'demand') {
+      demand += record.amount
+    } else {
+      fixed += record.amount
+    }
+  }
+  
+  return { total: demand + fixed, demand, fixed }
+}
+
+/**
+ * 生成存款确认消息（接口函数，便于后续扩展内容）
+ * @param amount 存款金额
+ * @param currency 货币类型
+ * @param cash 当前现金余额
+ * @returns 确认消息文本
+ */
+function generateDepositConfirmMessage(amount: number, currency: string, cash: number): string {
+  return `您将存入 ${amount} ${currency} 到银行，当前现金：${cash} ${currency}。\n确认操作请回复 yes 或 y，取消请回复其他内容。`
+}
+
+/**
+ * 生成取款确认消息（接口函数，便于后续扩展内容）
+ * @param amount 取款金额
+ * @param currency 货币类型
+ * @param bankBalance 当前银行余额
+ * @returns 确认消息文本
+ */
+function generateWithdrawConfirmMessage(amount: number, currency: string, bankBalance: number): string {
+  return `您将从银行取出 ${amount} ${currency}，当前存款：${bankBalance} ${currency}。\n确认操作请回复 yes 或 y，取消请回复其他内容。`
+}
+
+/**
  * 插件主函数
  */
 export async function apply(ctx: Context, config: Config) {
@@ -349,67 +528,90 @@ export async function apply(ctx: Context, config: Config) {
       const currency = options?.currency || config.defaultCurrency || 'coin'
 
       try {
-        // 直接查询银行存款，无需预先创建记录
-        const records = await ctx.database.get('monetary_bank', {
-          uid,
-          currency
-        })
-
-        if (!records || records.length === 0) {
+        const balance = await getBankBalance(ctx, uid, currency)
+        
+        if (balance.total === 0) {
           return `您在银行中还没有 ${currency} 存款。`
         }
 
-        const balance = records[0].value
-        return `您的银行存款：${balance} ${currency}`
+        return `您的银行资产：\n总资产：${balance.total} ${currency}\n可用资产：${balance.demand} ${currency}\n不可用资产：${balance.fixed} ${currency}`
 
       } catch (error) {
         logger.error('查询存款失败:', error)
         return '查询失败，请稍后再试。'
       }
-    })  // 注册命令：存款
-  ctx.command('bank.in <amount:number>', '存入货币到银行')
+    })
+
+  // 注册命令：存款（自动转为活期）
+  ctx.command('bank.in <amount:string>', '存入货币到银行（自动转为活期）')
     .userFields(['id'])
     .option('currency', '-c <currency:string> 指定货币类型')
+    .option('yes', '-y 跳过确认直接执行')
     .action(async ({ session, options }, amount) => {
-      if (!amount || amount <= 0) {
-        return '请输入有效的存款金额（正整数）。'
-      }
-
       const uid = session.user.id
       const currency = options?.currency || config.defaultCurrency || 'coin'
 
       try {
-        // 1. 检查用户现金是否充足（同时确保 monetary 表记录存在）
+        // 解析金额（支持 all 关键字）
         let cash = await getMonetaryBalance(ctx, uid, currency)
         if (cash === null) {
-          // 尝试创建 monetary 用户记录
           const created = await createMonetaryUser(ctx, uid, currency)
           if (!created) return '无法验证/创建主货币账户（monetary），请联系管理员。'
-          cash = 0  // 新创建的用户现金为 0
+          cash = 0
         }
-        if (cash < amount) return `现金不足！当前现金：${cash} ${currency}`
 
-        // 2. 扣除现金
-        const newCash = await changeMonetary(ctx, uid, currency, -amount)
+        const amountInput = String(amount || '').trim().toLowerCase()
+        let amountNum: number
+        
+        if (amountInput === 'all') {
+          amountNum = Math.floor(cash)
+          if (amountNum <= 0) return `没有可存入的现金。当前现金：${cash} ${currency}`
+        } else {
+          amountNum = parseInt(amountInput, 10)
+          if (Number.isNaN(amountNum) || amountNum <= 0) {
+            return '请输入有效的存款金额（正整数或 all）。'
+          }
+        }
+
+        if (cash < amountNum) return `现金不足！当前现金：${cash} ${currency}`
+
+        // 二次确认
+        if (!options?.yes) {
+          const confirmMsg = generateDepositConfirmMessage(amountNum, currency, cash)
+          await session.send(confirmMsg)
+          
+          const userInput = await session.prompt(30000)
+          if (!userInput) return '操作超时，已取消存款。'
+          
+          const confirmed = userInput.trim().toLowerCase()
+          if (confirmed !== 'yes' && confirmed !== 'y') {
+            return '已取消存款操作。'
+          }
+        }
+
+        // 扣除现金
+        const newCash = await changeMonetary(ctx, uid, currency, -amountNum)
         if (newCash === null) return '扣除现金失败，操作已中止。'
 
-        // 3. 增加银行存款（按需创建记录 - lazy-create）
-        const records = await ctx.database.get('monetary_bank', { uid, currency })
-        let newValue: number
+        // 创建活期记录（存入现金自动转为活期）
+        const demandConfig = config.demandInterest || { enabled: true, rate: 0.25, cycle: 'day' }
+        const settlementDate = calculateNextSettlementDate(demandConfig.cycle as any, true)
+        
+        await ctx.database.create('monetary_bank_int', {
+          uid,
+          currency,
+          amount: amountNum,
+          type: 'demand',
+          rate: demandConfig.rate || 0.25,
+          cycle: demandConfig.cycle as any || 'day',
+          settlementDate,
+          extendRequested: false
+        })
+        
+        const balance = await getBankBalance(ctx, uid, currency)
+        logInfo(`创建活期记录 uid=${uid}, amount=${amountNum}`)
 
-        if (!records || records.length === 0) {
-          // 首次存款，直接创建记录
-          await ctx.database.create('monetary_bank', { uid, currency, value: amount })
-          newValue = amount
-          logInfo(`首次存款，创建 monetary_bank 记录 uid=${uid}, currency=${currency}, value=${amount}`)
-        } else {
-          // 已有记录，累加存款
-          const current = Number(records[0].value) || 0
-          newValue = current + amount
-          await ctx.database.set('monetary_bank', { uid, currency }, { value: newValue })
-        }
-
-        return `成功存入 ${amount} ${currency}！现金余额：${newCash} ${currency}；银行存款：${newValue} ${currency}`
+        return `成功存入 ${amountNum} ${currency}（活期）！\n现金余额：${newCash} ${currency}\n银行总资产：${balance.total} ${currency}`
 
       } catch (error) {
         logger.error('存款失败:', error)
@@ -417,49 +619,311 @@ export async function apply(ctx: Context, config: Config) {
       }
     })
 
-  // 注册命令：取款
-  ctx.command('bank.out <amount:number>', '从银行取出货币')
+  // 注册命令：取款（仅从活期扣除）
+  ctx.command('bank.out <amount:string>', '从银行取出货币（仅可取活期）')
     .userFields(['id'])
     .option('currency', '-c <currency:string> 指定货币类型')
+    .option('yes', '-y 跳过确认直接执行')
     .action(async ({ session, options }, amount) => {
-      if (!amount || amount <= 0) {
-        return '请输入有效的取款金额（正整数）。'
-      }
-
       const uid = session.user.id
       const currency = options?.currency || config.defaultCurrency || 'coin'
 
       try {
-        // 1. 查询银行存款余额
-        const records = await ctx.database.get('monetary_bank', { uid, currency })
-        if (!records || records.length === 0) {
-          return `您在银行中没有 ${currency} 存款。`
+        // 查询活期余额
+        const balance = await getBankBalance(ctx, uid, currency)
+        
+        if (balance.demand === 0) {
+          return `没有可取出的活期存款。当前活期：${balance.demand} ${currency}`
         }
 
-        const currentBalance = Number(records[0].value || 0)
-
-        // 2. 检查银行余额是否足够
-        if (currentBalance < amount) {
-          return `余额不足！当前存款：${currentBalance} ${currency}`
+        // 解析金额（支持 all 关键字）
+        const amountInput = String(amount || '').trim().toLowerCase()
+        let amountNum: number
+        
+        if (amountInput === 'all') {
+          amountNum = Math.floor(balance.demand)
+        } else {
+          amountNum = parseInt(amountInput, 10)
+          if (Number.isNaN(amountNum) || amountNum <= 0) {
+            return '请输入有效的取款金额（正整数或 all）。'
+          }
         }
 
-        // 3. 先从银行扣除
-        const newBankValue = currentBalance - amount
-        await ctx.database.set('monetary_bank', { uid, currency }, { value: newBankValue })
+        if (balance.demand < amountNum) {
+          return `活期余额不足！当前活期：${balance.demand} ${currency}`
+        }
 
-        // 4. 增加用户现金余额
-        const newCash = await changeMonetary(ctx, uid, currency, amount)
+        // 二次确认
+        if (!options?.yes) {
+          const confirmMsg = generateWithdrawConfirmMessage(amountNum, currency, balance.demand)
+          await session.send(confirmMsg)
+          
+          const userInput = await session.prompt(30000)
+          if (!userInput) return '操作超时，已取消取款。'
+          
+          const confirmed = userInput.trim().toLowerCase()
+          if (confirmed !== 'yes' && confirmed !== 'y') {
+            return '已取消取款操作。'
+          }
+        }
+
+        // 按时间顺序扣除活期记录
+        let remaining = amountNum
+        const demandRecords = await ctx.database
+          .select('monetary_bank_int')
+          .where({ uid, currency, type: 'demand' })
+          .orderBy('settlementDate', 'asc')
+          .execute()
+        
+        for (const record of demandRecords) {
+          if (remaining <= 0) break
+          
+          if (record.amount <= remaining) {
+            remaining -= record.amount
+            await ctx.database.remove('monetary_bank_int', { id: record.id })
+            logInfo(`完全扣除活期记录 id=${record.id}, amount=${record.amount}`)
+          } else {
+            const newAmount = record.amount - remaining
+            await ctx.database.set('monetary_bank_int', { id: record.id }, { amount: newAmount })
+            logInfo(`部分扣除活期记录 id=${record.id}, 扣除=${remaining}, 剩余=${newAmount}`)
+            remaining = 0
+          }
+        }
+        
+        // 增加现金
+        const newCash = await changeMonetary(ctx, uid, currency, amountNum)
         if (newCash === null) {
-          // 回滚：尝试把银行余额恢复
-          await ctx.database.set('monetary_bank', { uid, currency }, { value: currentBalance })
-          return '转账到现金失败，操作已回滚，请联系管理员。'
+          return '转账到现金失败，请联系管理员。'
         }
 
-        return `成功取出 ${amount} ${currency}！现金余额：${newCash} ${currency}；银行剩余：${newBankValue} ${currency}`
+        const newBalance = await getBankBalance(ctx, uid, currency)
+        return `成功取出 ${amountNum} ${currency}！\n现金余额：${newCash} ${currency}\n银行总资产：${newBalance.total} ${currency}`
 
       } catch (error) {
         logger.error('取款失败:', error)
         return '取款失败，请稍后再试。'
       }
     })
+
+  // 注册命令：申请定期存款
+  ctx.command('bank.fixed', '申请定期存款')
+    .userFields(['id'])
+    .option('currency', '-c <currency:string> 指定货币类型')
+    .action(async ({ session, options }) => {
+      if (!config.enableInterest) {
+        return '利息功能未启用。'
+      }
+      
+      const uid = session.user.id
+      const currency = options?.currency || config.defaultCurrency || 'coin'
+      
+      // 显示可用的定期方案
+      const plans = config.fixedInterest || []
+      if (plans.length === 0) {
+        return '当前没有可用的定期存款方案。'
+      }
+      
+      let msg = '可选的定期存款方案：\n'
+      plans.forEach((plan, index) => {
+        const cycleText = plan.cycle === 'day' ? '日' : plan.cycle === 'week' ? '周' : '月'
+        msg += `${index + 1}. ${plan.name} - 利率：${plan.rate}% - 周期：${cycleText}\n`
+      })
+      msg += '\n请输入方案编号选择，或输入 0 取消：'
+      
+      await session.send(msg)
+      
+      const planInput = await session.prompt(30000)
+      if (!planInput) return '操作超时，已取消。'
+      
+      const planIndex = parseInt(planInput.trim()) - 1
+      if (planIndex < 0) return '已取消定期存款申请。'
+      if (planIndex >= plans.length) return '无效的方案编号。'
+      
+      const selectedPlan = plans[planIndex]
+      
+      // 询问金额
+      await session.send(`请输入存入金额（可使用现金和活期存款）：`)
+      const amountInput = await session.prompt(30000)
+      if (!amountInput) return '操作超时，已取消。'
+      
+      const amount = parseInt(amountInput.trim())
+      if (!amount || amount <= 0) return '无效的金额。'
+      
+      try {
+        // 检查用户资金
+        const cash = await getMonetaryBalance(ctx, uid, currency) || 0
+        const balance = await getBankBalance(ctx, uid, currency)
+        
+        const totalAvailable = cash + balance.demand
+        if (totalAvailable < amount) {
+          return `资金不足！现金：${cash} ${currency}，活期存款：${balance.demand} ${currency}，合计：${totalAvailable} ${currency}`
+        }
+        
+        // 确认
+        await session.send(`将存入 ${amount} ${currency} 到定期（${selectedPlan.name}），利率 ${selectedPlan.rate}%。\n确认请输入 yes 或 y：`)
+        const confirm = await session.prompt(30000)
+        if (!confirm || !['yes', 'y'].includes(confirm.trim().toLowerCase())) {
+          return '已取消定期存款申请。'
+        }
+        
+        // 扣款逻辑：优先扣现金，不足时扣活期
+        let remaining = amount
+        let fromCash = 0
+        let fromDemand = 0
+        
+        if (cash > 0) {
+          fromCash = Math.min(cash, remaining)
+          remaining -= fromCash
+          const newCash = await changeMonetary(ctx, uid, currency, -fromCash)
+          if (newCash === null) return '扣除现金失败。'
+        }
+        
+        if (remaining > 0) {
+          fromDemand = remaining
+          // 从活期记录中扣除
+          const demandRecords = await ctx.database
+            .select('monetary_bank_int')
+            .where({ uid, currency, type: 'demand' })
+            .orderBy('settlementDate', 'asc')
+            .execute()
+          
+          let toDeduct = fromDemand
+          for (const record of demandRecords) {
+            if (toDeduct <= 0) break
+            
+            if (record.amount <= toDeduct) {
+              toDeduct -= record.amount
+              await ctx.database.remove('monetary_bank_int', { id: record.id })
+            } else {
+              const newAmount = record.amount - toDeduct
+              await ctx.database.set('monetary_bank_int', { id: record.id }, { amount: newAmount })
+              toDeduct = 0
+            }
+          }
+        }
+        
+        // 创建定期记录
+        const settlementDate = calculateNextSettlementDate(selectedPlan.cycle as any, true)
+        await ctx.database.create('monetary_bank_int', {
+          uid,
+          currency,
+          amount,
+          type: 'fixed',
+          rate: selectedPlan.rate,
+          cycle: selectedPlan.cycle as any,
+          settlementDate,
+          extendRequested: false
+        })
+        
+        const newBalance = await getBankBalance(ctx, uid, currency)
+        return `成功申请定期存款！\n方案：${selectedPlan.name}\n金额：${amount} ${currency}\n来源：现金 ${fromCash} + 活期 ${fromDemand}\n到期日：${settlementDate.toLocaleDateString()}\n银行总资产：${newBalance.total} ${currency}`
+        
+      } catch (error) {
+        logger.error('定期存款失败:', error)
+        return '定期存款失败，请稍后再试。'
+      }
+    })
+
+  // 注册命令：管理定期延期
+  ctx.command('bank.fixed.manage', '管理定期存款延期')
+    .userFields(['id'])
+    .option('currency', '-c <currency:string> 指定货币类型')
+    .action(async ({ session, options }) => {
+      if (!config.enableInterest) {
+        return '利息功能未启用。'
+      }
+      
+      const uid = session.user.id
+      const currency = options?.currency || config.defaultCurrency || 'coin'
+      
+      try {
+        // 查询用户的定期记录
+        const fixedRecords = await ctx.database
+          .select('monetary_bank_int')
+          .where({ uid, currency, type: 'fixed' })
+          .orderBy('settlementDate', 'asc')
+          .execute()
+        
+        if (fixedRecords.length === 0) {
+          return '您没有定期存款记录。'
+        }
+        
+        let msg = '您的定期存款：\n'
+        fixedRecords.forEach((record, index) => {
+          const cycleText = record.cycle === 'day' ? '日' : record.cycle === 'week' ? '周' : '月'
+          const currentPlan = `${record.rate}%/${cycleText}`
+          let status = '[未延期]'
+          if (record.extendRequested && record.nextRate !== undefined && record.nextCycle) {
+            const nextCycleText = record.nextCycle === 'day' ? '日' : record.nextCycle === 'week' ? '周' : '月'
+            status = `[已延期至: ${record.nextRate}%/${nextCycleText}]`
+          }
+          msg += `${index + 1}. ${currentPlan} -【 ${record.amount} ${currency} 】- 到期：${new Date(record.settlementDate).toLocaleDateString()} ${status}\n`
+        })
+        msg += '\n请输入编号管理，或输入 0 退出：'
+        
+        await session.send(msg)
+        
+        const input = await session.prompt(30000)
+        if (!input) return '操作超时。'
+        
+        const recordIndex = parseInt(input.trim()) - 1
+        if (recordIndex < 0) return '已退出。'
+        if (recordIndex >= fixedRecords.length) return '无效的编号。'
+        
+        const selectedRecord = fixedRecords[recordIndex]
+        
+        // 显示操作选项
+        if (selectedRecord.extendRequested) {
+          const nextCycleText = selectedRecord.nextCycle === 'day' ? '日' : selectedRecord.nextCycle === 'week' ? '周' : '月'
+          await session.send(`当前已申请延期至：${selectedRecord.nextRate}%/${nextCycleText}\n输入 1 取消延期申请，输入 0 返回：`)
+          const action = await session.prompt(30000)
+          if (!action || action.trim() === '0') return '已返回。'
+          
+          if (action.trim() === '1') {
+            await ctx.database.set('monetary_bank_int', { id: selectedRecord.id }, {
+              extendRequested: false,
+              nextRate: null,
+              nextCycle: null
+            })
+            return '已取消延期申请，到期后将自动转为活期。'
+          }
+        } else {
+          // 显示可选的续期方案
+          const plans = config.fixedInterest || []
+          let planMsg = '可选的续期方案：\n'
+          plans.forEach((plan, index) => {
+            const cycleText = plan.cycle === 'day' ? '日' : plan.cycle === 'week' ? '周' : '月'
+            planMsg += `${index + 1}. ${plan.name} - 利率：${plan.rate}% - 周期：${cycleText}\n`
+          })
+          planMsg += '\n请输入方案编号申请延期，或输入 0 返回：'
+          
+          await session.send(planMsg)
+          const planInput = await session.prompt(30000)
+          if (!planInput) return '操作超时。'
+          
+          const planIndex = parseInt(planInput.trim()) - 1
+          if (planIndex < 0) return '已返回。'
+          if (planIndex >= plans.length) return '无效的方案编号。'
+          
+          const newPlan = plans[planIndex]
+          
+          await ctx.database.set('monetary_bank_int', { id: selectedRecord.id }, {
+            extendRequested: true,
+            nextRate: newPlan.rate,
+            nextCycle: newPlan.cycle as any
+          })
+          
+          return `已申请延期！到期后将按：${newPlan.name}（利率 ${newPlan.rate}%）继续存款。`
+        }
+        
+      } catch (error) {
+        logger.error('管理定期失败:', error)
+        return '操作失败，请稍后再试。'
+      }
+    })
+
+  // 启动利息结算定时任务
+  if (config.enableInterest) {
+    await scheduleInterestSettlement(ctx, config)
+  }
 }
