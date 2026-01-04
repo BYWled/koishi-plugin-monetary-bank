@@ -1,6 +1,6 @@
 # koishi-plugin-monetary-bank | 货币银行
 
-[![npm](https://img.shields.io/npm/v/koishi-plugin-monetary-bank?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-monetary-bank)
+[![npm](https://img.shields.io/npm/v/koishi-plugin-monetary-bank?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-monetary-bank) [![GitHub stars](https://img.shields.io/github/stars/BYWled/koishi-plugin-monetary-bank?style=flat-square&logo=github)](https://github.com/BYWled/koishi-plugin-monetary-bank) [![Gitee](https://img.shields.io/badge/Gitee-Project-c71d23?style=flat-square&logo=gitee&logoColor=white)](https://gitee.com/BYWled/koishi-plugin-monetary-bank)
 
 `Provides banking related services for monetary money`
 
@@ -8,7 +8,7 @@
 
 ---
 
-**版本**: v2.0.0-Alpha.1
+**版本**: v2.0.1
 
 **主要更新**
 - 🎨 **图形化交互**: 引入完整的图形化界面系统（需 puppeteer），提供精美的视觉体验。
@@ -222,6 +222,11 @@ const image = await ctx.puppeteer.render(html);
 ```
 
 ## 📝 更新日志
+
+### v2.0.1
+
+- **修复**: 安装插件时对新版本的Koishi显示不兼容的问题。
+- **文档**: 同步更新Github和Gitee至README。
 
 ### v2.0.0-Alpha.1
 **🎨 图形化大版本更新**
