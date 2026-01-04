@@ -91,6 +91,141 @@ declare module 'koishi' {
   interface Tables {
     monetary_bank_int: MonetaryBankInterest
   }
+  
+  interface Context {
+    monetaryBank: MonetaryBankAPI
+  }
+}
+
+/**
+ * 银行API接口类
+ * 提供给其他插件调用的银行操作接口
+ */
+export class MonetaryBankAPI {
+  constructor(private ctx: Context, private config: Config) {}
+
+  /**
+   * 查询用户银行余额
+   * @param uid 用户ID
+   * @param currency 货币类型
+   * @returns 包含总资产、活期、定期的余额信息
+   */
+  async getBalance(uid: number, currency: string): Promise<{ total: number; demand: number; fixed: number }> {
+    return await getBankBalance(this.ctx, uid, currency)
+  }
+
+  /**
+   * 存款（从用户现金存入银行，自动转为活期）
+   * @param uid 用户ID
+   * @param currency 货币类型
+   * @param amount 存款金额
+   * @returns 成功返回 { success: true, newCash, newBalance }，失败返回 { success: false, error }
+   */
+  async deposit(uid: number, currency: string, amount: number): Promise<{ success: boolean; newCash?: number; newBalance?: { total: number; demand: number; fixed: number }; error?: string }> {
+    try {
+      if (!amount || amount <= 0) {
+        return { success: false, error: '金额必须大于0' }
+      }
+
+      // 检查现金余额
+      let cash = await getMonetaryBalance(this.ctx, uid, currency)
+      if (cash === null) {
+        const created = await createMonetaryUser(this.ctx, uid, currency)
+        if (!created) return { success: false, error: '无法验证/创建主货币账户' }
+        cash = 0
+      }
+
+      if (cash < amount) {
+        return { success: false, error: `现金不足，当前现金：${cash} ${currency}` }
+      }
+
+      // 扣除现金
+      const newCash = await changeMonetary(this.ctx, uid, currency, -amount)
+      if (newCash === null) {
+        return { success: false, error: '扣除现金失败' }
+      }
+
+      // 创建活期记录
+      const demandConfig = this.config.demandInterest || { enabled: true, rate: 0.25, cycle: 'day' }
+      const settlementDate = calculateNextSettlementDate(demandConfig.cycle as any, true)
+      
+      await this.ctx.database.create('monetary_bank_int', {
+        uid,
+        currency,
+        amount,
+        type: 'demand',
+        rate: demandConfig.rate || 0.25,
+        cycle: demandConfig.cycle as any || 'day',
+        settlementDate,
+        extendRequested: false
+      })
+      
+      const newBalance = await getBankBalance(this.ctx, uid, currency)
+      logInfo(`API存款: uid=${uid}, amount=${amount}`)
+
+      return { success: true, newCash, newBalance }
+    } catch (error) {
+      logger.error('API存款失败:', error)
+      return { success: false, error: '存款操作失败' }
+    }
+  }
+
+  /**
+   * 取款（从银行取出到用户现金，仅可取活期）
+   * @param uid 用户ID
+   * @param currency 货币类型
+   * @param amount 取款金额
+   * @returns 成功返回 { success: true, newCash, newBalance }，失败返回 { success: false, error }
+   */
+  async withdraw(uid: number, currency: string, amount: number): Promise<{ success: boolean; newCash?: number; newBalance?: { total: number; demand: number; fixed: number }; error?: string }> {
+    try {
+      if (!amount || amount <= 0) {
+        return { success: false, error: '金额必须大于0' }
+      }
+
+      // 查询活期余额
+      const balance = await getBankBalance(this.ctx, uid, currency)
+      
+      if (balance.demand < amount) {
+        return { success: false, error: `可用余额不足，当前活期：${balance.demand} ${currency}` }
+      }
+
+      // 按时间顺序扣除活期记录
+      let remaining = amount
+      const demandRecords = await this.ctx.database
+        .select('monetary_bank_int')
+        .where({ uid, currency, type: 'demand' })
+        .orderBy('settlementDate', 'asc')
+        .execute()
+      
+      for (const record of demandRecords) {
+        if (remaining <= 0) break
+        
+        if (record.amount <= remaining) {
+          remaining -= record.amount
+          await this.ctx.database.remove('monetary_bank_int', { id: record.id })
+        } else {
+          const newAmount = record.amount - remaining
+          await this.ctx.database.set('monetary_bank_int', { id: record.id }, { amount: newAmount })
+          remaining = 0
+        }
+      }
+      
+      // 增加现金
+      const newCash = await changeMonetary(this.ctx, uid, currency, amount)
+      if (newCash === null) {
+        return { success: false, error: '转账到现金失败' }
+      }
+
+      const newBalance = await getBankBalance(this.ctx, uid, currency)
+      logInfo(`API取款: uid=${uid}, amount=${amount}`)
+
+      return { success: true, newCash, newBalance }
+    } catch (error) {
+      logger.error('API取款失败:', error)
+      return { success: false, error: '取款操作失败' }
+    }
+  }
 }
 
 /**
@@ -372,6 +507,9 @@ async function scheduleInterestSettlement(ctx: Context, config: Config) {
         }
       }
       
+      // 结算完成后合并可合并的活期记录以减少碎片记录
+      await mergeDemandRecords(ctx)
+
       logSuccess('利息结算任务执行完成')
     } catch (error) {
       logger.error('利息结算任务执行失败:', error)
@@ -480,6 +618,68 @@ async function getBankBalance(ctx: Context, uid: number, currency: string): Prom
 }
 
 /**
+ * 合并活期记录（仅对 type='demand' 有效）
+ * 规则：按 uid + currency + settlementDate(0点) + rate + cycle 分组，若同组中有多条记录则合并为一条
+ * 这样可以避免大量小笔活期记录造成查询/结算性能问题
+ */
+async function mergeDemandRecords(ctx: Context) {
+  try {
+    const records = await ctx.database
+      .select('monetary_bank_int')
+      .where({ type: 'demand' })
+      .execute()
+
+    const groups: Record<string, { ids: number[]; uid: number; currency: string; settlementDate: Date; rate: number; cycle: string; total: number }> = {}
+
+    for (const r of records) {
+      // 规范化结算日期到当天0点以便对比
+      const sd = new Date(r.settlementDate)
+      sd.setHours(0, 0, 0, 0)
+      const key = `${r.uid}|${r.currency}|${sd.getTime()}|${r.rate}|${r.cycle}`
+
+      if (!groups[key]) {
+        groups[key] = { ids: [], uid: r.uid, currency: r.currency, settlementDate: sd, rate: r.rate, cycle: r.cycle, total: 0 }
+      }
+      groups[key].ids.push(r.id)
+      groups[key].total += Number(r.amount || 0)
+    }
+
+    for (const key of Object.keys(groups)) {
+      const g = groups[key]
+      if (g.ids.length <= 1) continue
+
+      // 删除原有多条记录
+      for (const id of g.ids) {
+        try {
+          await ctx.database.remove('monetary_bank_int', { id })
+        } catch (e) {
+          logger.warn(`合并活期记录时删除 id=${id} 失败：`, e)
+        }
+      }
+
+      // 创建合并后的单条记录
+      try {
+        await ctx.database.create('monetary_bank_int', {
+          uid: g.uid,
+          currency: g.currency,
+          amount: g.total,
+          type: 'demand',
+          rate: g.rate,
+          cycle: g.cycle as any,
+          settlementDate: g.settlementDate,
+          extendRequested: false
+        })
+        logInfo(`合并活期记录: uid=${g.uid}, currency=${g.currency}, settlementDate=${g.settlementDate.toISOString()}, 合并后金额=${g.total}`)
+      } catch (e) {
+        logger.error('创建合并后活期记录失败：', e)
+      }
+    }
+  } catch (err) {
+    logger.error('合并活期记录失败：', err)
+  }
+}
+
+/**
  * 生成存款确认消息（接口函数，便于后续扩展内容）
  * @param amount 存款金额
  * @param currency 货币类型
@@ -519,22 +719,25 @@ export async function apply(ctx: Context, config: Config) {
 
   logSuccess('✓ monetary-bank 插件加载成功')
 
+  // 注册银行API到Context
+  ctx.monetaryBank = new MonetaryBankAPI(ctx, config)
+
   // 注册命令：查询存款
-  ctx.command('bank.bal', '查询银行存款')
+  ctx.command('bank.bal [currency:string]', '查询银行存款')
     .userFields(['id'])
     .option('currency', '-c <currency:string> 指定货币类型')
-    .action(async ({ session, options }) => {
+    .action(async ({ session, options }, currencyArg) => {
       const uid = session.user.id
-      const currency = options?.currency || config.defaultCurrency || 'coin'
+      const currency = options?.currency || currencyArg || config.defaultCurrency || 'coin'
 
       try {
-        const balance = await getBankBalance(ctx, uid, currency)
+        const balance = await ctx.monetaryBank.getBalance(uid, currency)
         
         if (balance.total === 0) {
           return `您在银行中还没有 ${currency} 存款。`
         }
 
-        return `您的银行资产：\n总资产：${balance.total} ${currency}\n可用资产：${balance.demand} ${currency}\n不可用资产：${balance.fixed} ${currency}`
+        return `您的银行资产：\n总资产：${balance.total} ${currency}\n活期资产（可用）：${balance.demand} ${currency}\n不可用资产（定期）：${balance.fixed} ${currency}`
 
       } catch (error) {
         logger.error('查询存款失败:', error)
@@ -543,7 +746,7 @@ export async function apply(ctx: Context, config: Config) {
     })
 
   // 注册命令：存款（自动转为活期）
-  ctx.command('bank.in <amount:string>', '存入货币到银行（自动转为活期）')
+  ctx.command('bank.in [amount:string]', '存入货币到银行活期')
     .userFields(['id'])
     .option('currency', '-c <currency:string> 指定货币类型')
     .option('yes', '-y 跳过确认直接执行')
@@ -552,6 +755,14 @@ export async function apply(ctx: Context, config: Config) {
       const currency = options?.currency || config.defaultCurrency || 'coin'
 
       try {
+        // 交互式输入金额
+        if (!amount) {
+          await session.send(`请输入存款金额（正整数或 all）：`)
+          const amountInput = await session.prompt(30000)
+          if (!amountInput) return '操作超时，已取消存款。'
+          amount = amountInput.trim()
+        }
+
         // 解析金额（支持 all 关键字）
         let cash = await getMonetaryBalance(ctx, uid, currency)
         if (cash === null) {
@@ -573,8 +784,6 @@ export async function apply(ctx: Context, config: Config) {
           }
         }
 
-        if (cash < amountNum) return `现金不足！当前现金：${cash} ${currency}`
-
         // 二次确认
         if (!options?.yes) {
           const confirmMsg = generateDepositConfirmMessage(amountNum, currency, cash)
@@ -589,29 +798,14 @@ export async function apply(ctx: Context, config: Config) {
           }
         }
 
-        // 扣除现金
-        const newCash = await changeMonetary(ctx, uid, currency, -amountNum)
-        if (newCash === null) return '扣除现金失败，操作已中止。'
-
-        // 创建活期记录（存入现金自动转为活期）
-        const demandConfig = config.demandInterest || { enabled: true, rate: 0.25, cycle: 'day' }
-        const settlementDate = calculateNextSettlementDate(demandConfig.cycle as any, true)
+        // 调用API存款
+        const result = await ctx.monetaryBank.deposit(uid, currency, amountNum)
         
-        await ctx.database.create('monetary_bank_int', {
-          uid,
-          currency,
-          amount: amountNum,
-          type: 'demand',
-          rate: demandConfig.rate || 0.25,
-          cycle: demandConfig.cycle as any || 'day',
-          settlementDate,
-          extendRequested: false
-        })
-        
-        const balance = await getBankBalance(ctx, uid, currency)
-        logInfo(`创建活期记录 uid=${uid}, amount=${amountNum}`)
+        if (!result.success) {
+          return result.error || '存款失败'
+        }
 
-        return `成功存入 ${amountNum} ${currency}（活期）！\n现金余额：${newCash} ${currency}\n银行总资产：${balance.total} ${currency}`
+        return `成功存入 ${amountNum} ${currency}（活期）！\n现金余额：${result.newCash} ${currency}\n银行总资产：${result.newBalance.total} ${currency}`
 
       } catch (error) {
         logger.error('存款失败:', error)
@@ -620,7 +814,7 @@ export async function apply(ctx: Context, config: Config) {
     })
 
   // 注册命令：取款（仅从活期扣除）
-  ctx.command('bank.out <amount:string>', '从银行取出货币（仅可取活期）')
+  ctx.command('bank.out [amount:string]', '从银行取出货币')
     .userFields(['id'])
     .option('currency', '-c <currency:string> 指定货币类型')
     .option('yes', '-y 跳过确认直接执行')
@@ -630,10 +824,18 @@ export async function apply(ctx: Context, config: Config) {
 
       try {
         // 查询活期余额
-        const balance = await getBankBalance(ctx, uid, currency)
+        const balance = await ctx.monetaryBank.getBalance(uid, currency)
         
         if (balance.demand === 0) {
-          return `没有可取出的活期存款。当前活期：${balance.demand} ${currency}`
+          return `没有可取出的存款。当前活期：${balance.demand} ${currency}`
+        }
+
+        // 交互式输入金额
+        if (!amount) {
+          await session.send(`请输入取款金额（正整数或 all）：\n当前可用余额：${balance.demand} ${currency}`)
+          const amountInput = await session.prompt(30000)
+          if (!amountInput) return '操作超时，已取消取款。'
+          amount = amountInput.trim()
         }
 
         // 解析金额（支持 all 关键字）
@@ -647,10 +849,6 @@ export async function apply(ctx: Context, config: Config) {
           if (Number.isNaN(amountNum) || amountNum <= 0) {
             return '请输入有效的取款金额（正整数或 all）。'
           }
-        }
-
-        if (balance.demand < amountNum) {
-          return `活期余额不足！当前活期：${balance.demand} ${currency}`
         }
 
         // 二次确认
@@ -667,37 +865,14 @@ export async function apply(ctx: Context, config: Config) {
           }
         }
 
-        // 按时间顺序扣除活期记录
-        let remaining = amountNum
-        const demandRecords = await ctx.database
-          .select('monetary_bank_int')
-          .where({ uid, currency, type: 'demand' })
-          .orderBy('settlementDate', 'asc')
-          .execute()
+        // 调用API取款
+        const result = await ctx.monetaryBank.withdraw(uid, currency, amountNum)
         
-        for (const record of demandRecords) {
-          if (remaining <= 0) break
-          
-          if (record.amount <= remaining) {
-            remaining -= record.amount
-            await ctx.database.remove('monetary_bank_int', { id: record.id })
-            logInfo(`完全扣除活期记录 id=${record.id}, amount=${record.amount}`)
-          } else {
-            const newAmount = record.amount - remaining
-            await ctx.database.set('monetary_bank_int', { id: record.id }, { amount: newAmount })
-            logInfo(`部分扣除活期记录 id=${record.id}, 扣除=${remaining}, 剩余=${newAmount}`)
-            remaining = 0
-          }
-        }
-        
-        // 增加现金
-        const newCash = await changeMonetary(ctx, uid, currency, amountNum)
-        if (newCash === null) {
-          return '转账到现金失败，请联系管理员。'
+        if (!result.success) {
+          return result.error || '取款失败'
         }
 
-        const newBalance = await getBankBalance(ctx, uid, currency)
-        return `成功取出 ${amountNum} ${currency}！\n现金余额：${newCash} ${currency}\n银行总资产：${newBalance.total} ${currency}`
+        return `成功取出 ${amountNum} ${currency}！\n现金余额：${result.newCash} ${currency}\n银行总资产：${result.newBalance.total} ${currency}`
 
       } catch (error) {
         logger.error('取款失败:', error)
@@ -742,7 +917,7 @@ export async function apply(ctx: Context, config: Config) {
       const selectedPlan = plans[planIndex]
       
       // 询问金额
-      await session.send(`请输入存入金额（可使用现金和活期存款）：`)
+      await session.send(`请输入存入金额（优先使用现金，不足时使用银行活期存款）：`)
       const amountInput = await session.prompt(30000)
       if (!amountInput) return '操作超时，已取消。'
       
