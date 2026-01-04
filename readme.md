@@ -8,158 +8,270 @@
 
 ---
 
-**版本**: v1.2.1
+**版本**: v2.0.0-Alpha.1
 
-**特点**
-- **查询/存取**: 提供银行资产查询、存入（存为活期）、取出（仅活期）。
-- **定期存款**: 支持申请定期存款与到期转活期或延期续期。
-- **利息结算（可选）**: 支持活期/定期利息结算（可设置为每日/周/月结算）。
-- **兼容性**: 尽量兼容外部项目中常见的 `monetary` 表字段（`uid`/`id` 与 `value|balance|amount|coin` 等）。
+**主要更新**
+- 🎨 **图形化交互**: 引入完整的图形化界面系统（需 puppeteer），提供精美的视觉体验。
+- 🏠 **银行首页**: 新增 `bank` 命令，一站式展示账户信息和功能导航。
+- 📱 **智能降级**: 自动检测环境，无 puppeteer 时无缝切换回纯文本模式。
+- 🖼️ **交互升级**: 存款、取款、定期申请均配备图形化确认与结果页面。
 
-**依赖**
-- **必需**: `database` 服务（在 Koishi 配置中需启用数据库插件）
+## ✨ 特点
 
-**数据库表**
-- **表名**: `monetary_bank_int` — 用于记录所有银行存款（活期与定期）。
-- **早期表名**：`monetary_bank` — 用于存放用户和银行存款。
+- **多模式交互**: 支持精美的图形化界面，同时也完全兼容纯文本操作。
+- **完整银行功能**: 支持活期存款、定期存款、取款、余额查询。
+- **利息系统**: 支持活期/定期利息结算，可配置结算周期（日/周/月）。
+- **定期管理**: 支持定期存款的自动转存、延期续期管理。
+- **高兼容性**: 兼容 `monetary` 表的多种字段命名（`uid`/`id`, `value`/`balance` 等）。
 
-**快速安装**
-- 在 Koishi 项目中安装并启用本插件（示例：`package.json` 或 Koishi 配置中添加插件）
+## 📦 安装与依赖
 
-**配置说明**
-- **`defaultCurrency`**: `string` — 默认货币，默认值：`coin`。
-- **`debug`**: `boolean` — 是否输出 info/success 级别日志，默认：`true`。
-- **`enableInterest`**: `boolean` — 是否启用利息与定期功能，默认：`false`。
-- **`demandInterest`**: `object` — 活期利息配置：
-	- **`enabled`**: `boolean` — 是否启用活期利息（默认 `true`）
-	- **`rate`**: `number` — 活期利率（%），默认 `0.25`
-	- **`cycle`**: `'day' | 'week' | 'month'` — 结算周期，默认 `day`
-- **`fixedInterest`**: `Array<{ name: string; rate: number; cycle: 'day'|'week'|'month' }>` — 定期方案列表，默认示例：
-	- `{ name: '周定期', rate: 4.35, cycle: 'week' }`
-	- `{ name: '月定期', rate: 50, cycle: 'month' }`
+### 基础依赖
+- **必需**: `database` 服务（需在 Koishi 中配置数据库插件）。
+- **数据库表**: 
+  - `monetary_bank_int`: 记录银行存款（活期/定期）。
+  - `monetary` (或配置的表名): 用户主货币表。
 
-在 Koishi 插件配置中示例：
+### 图形化依赖（可选）
+要启用图形化界面，请安装 `puppeteer` 插件：
 
-```
-plugins: {
-	'monetary-bank': {
-		defaultCurrency: 'coin',
-		debug: true,
-		enableInterest: true,
-		demandInterest: { enabled: true, rate: 0.25, cycle: 'day' },
-		fixedInterest: [
-			{ name: '周定期', rate: 4.35, cycle: 'week' },
-			{ name: '月定期', rate: 50, cycle: 'month' }
-		]
-	}
-}
+```bash
+# 在 Koishi 插件市场搜索安装
+puppeteer
 ```
 
-**命令一览**
-- **`bank.bal`**: 查询银行存款
-	- 选项：`-c <currency>` 指定货币
-	- 返回总资产、活期（可用）与定期（不可用）数量
-- **`bank.in <amount>`**: 存入现金到银行（自动转为活期）
-	- 支持金额为正整数或 `all`
-	- 选项：`-c <currency>` 指定货币，`-y` 跳过确认
-	- 流程：检查现金 -> 二次确认（可跳过）-> 扣除现金 -> 创建活期记录
-- **`bank.out <amount>`**: 从银行取出货币（仅从活期）
-	- 支持 `all`
-	- 选项：`-c <currency>`，`-y` 跳过确认
-	- 按时间顺序扣除活期记录并转回现金
-- **`bank.fixed`**: 申请定期存款
-	- 可选择配置中的定期方案
-	- 支持从现金和活期组合扣款（优先扣现金）
-- **`bank.fixed.manage`**: 管理已申请的定期（申请延期或取消延期）
+若未安装 puppeteer，插件将自动以**纯文本模式**运行，功能不受影响。
 
-命令示例：
+### ⚠️ 重要提示：热重载与服务注册
 
+本插件使用 `ctx.provide()` 注册 `monetaryBank` 服务供其他插件调用。为了支持热重载（配置修改后自动重启），插件内部已实现**服务注册检测机制**：
+
+- ✅ **正常情况**: 插件会检测服务是否已注册，避免重复注册。
+- ⚠️ **可能的报错**: 在某些 Koishi 环境下，热重载时可能仍会出现以下警告：
+  ```
+  service monetaryBank has been registered
+  ```
+  或
+  ```
+  property monetaryBank is not registered
+  ```
+
+**解决方案**：
+1. **忽略警告**: 这些警告也许不影响插件正常使用，仅为服务注册的重复检测提示。
+2. **重启 Koishi**: 如果遇到功能异常，完全重启 Koishi 进程即可解决。
+3. **避免频繁热重载**: 尽量在配置完成后再启用插件，减少热重载次数。
+
+**技术说明**: 插件已实现 `ctx.registry` 检测 + `try/catch` 防护，但不同版本的 Koishi 对服务注册的处理机制可能存在差异，导致警告仍可能出现。这不会影响插件核心功能的稳定性。
+
+## ⚙️ 配置说明
+
+在 Koishi 插件配置中：
+
+```yaml
+plugins:
+  'monetary-bank':
+    defaultCurrency: 'coin'    # 默认货币
+    debug: true                # 输出调试日志
+    enableInterest: true       # 启用利息与定期功能
+    
+    # 活期利息配置
+    demandInterest:
+      enabled: true
+      rate: 0.25               # 利率 (%)
+      cycle: 'day'             # 结算周期: day/week/month
+      
+    # 定期方案列表
+    fixedInterest:
+      - name: '周定期'
+        rate: 4.35
+        cycle: 'week'
+      - name: '月定期'
+        rate: 50.0
+        cycle: 'month'
 ```
-bank.bal -c coin
-bank.in 100 -c coin
-bank.out all -c coin
-bank.fixed -c coin
-bank.fixed.manage -c coin
+
+## 🎮 命令与功能
+
+本插件提供了一套完整的银行指令。当 puppeteer 可用时，这些命令将展示精美的图形化界面。
+
+### 🏠 银行首页 `bank`
+- **功能**: 查看账户总览和功能导航。
+- **图形化**: 展示现金余额、银行总资产卡片，以及所有可用命令的网格导航。
+- **文本模式**: 显示简单的账户余额和帮助信息。
+
+### 💰 余额查询 `bank.bal`
+- **选项**: `-c <currency>` 指定货币。
+- **图形化**: 大标题展示总资产，网格布局展示活期/定期占比及百分比可视化。
+
+### 📥 存款 `bank.in <amount>`
+- **参数**: `amount` (金额或 `all`)。
+- **选项**: `-c <currency>` 指定货币，`-y` 跳过确认。
+- **流程**: 
+  1. 输入金额。
+  2. **确认页面**（图形化）：显示存款前后余额对比、温馨提示。
+  3. **成功页面**（图形化）：展示存入金额、最新资产分布。
+
+### 📤 取款 `bank.out <amount>`
+- **参数**: `amount` (金额或 `all`)。
+- **选项**: `-c <currency>` 指定货币，`-y` 跳过确认。
+- **流程**:
+  1. 输入金额（仅限提取活期余额）。
+  2. **确认页面**（图形化）：显示取款金额、剩余活期预览。
+  3. **成功页面**（图形化）：展示取出金额、现金/银行余额对比。
+
+### 🔒 定期存款 `bank.fixed`
+- **功能**: 申请定期存款。
+- **图形化**: 
+  - **方案选择页**: 列表展示所有定期方案（利率/周期），显示当前可用资金（现金+活期）。
+  - **确认页**: 确认存款金额与方案详情。
+
+### 📋 定期管理 `bank.fixed.manage`
+- **功能**: 查看和管理已有的定期存款。
+- **图形化**: 列表式展示所有定期记录，包含到期时间、利率、延期状态标签。
+
+## 🎨 图形化系统设计
+
+### 视觉风格 (v2.0.0+)
+- **主题**: 轻盈渐变（#eef2f7 → #f5f7fb），现代卡片式布局，圆角设计。
+- **色彩**: 
+  - 主色调：紫蓝渐变（#5b7cfa → #7f5af0）用于关键信息展示。
+  - 状态色：成功 #4ade80 / 信息 #60a5fa / 警告 #fbbf24。
+- **交互**: 悬停效果、平滑过渡、清晰的视觉层级。
+- **组件化**: 统一的头部、余额卡片、信息行、命令网格、提示框、确认对话框等可复用组件。
+- **响应式**: 网格布局自适应（`repeat(auto-fit, minmax(210px, 1fr))`），支持不同内容宽度。
+
+### 核心组件 (`src/templates.ts`)
+```typescript
+// 基础模板（包含全局样式）
+getBaseTemplate(content: string, width?: number): string
+
+// 页面头部（图标 + 标题 + 用户名）
+renderHeader(icon: string, title: string, username: string): string
+
+// 余额大标题卡片
+renderBalanceCard(label: string, value: number, currency: string): string
+
+// 网格信息项（支持多种主题色）
+renderGridItem(icon, title, value, subtitle, type): string
+
+// 信息行（标签-值对）
+renderInfoRow(label: string, value: string, valueClass?: ''|'success'|'error'): string
+
+// 命令导航网格
+renderCommandGrid(commands: Array<{icon, name, desc}>): string
+
+// 提示信息框
+renderPromptBox(title: string, message: string, type?: 'info'|'warning'|'success'): string
+
+// 确认对话框
+renderConfirmDialog(title: string, items: Array<{label, value}>): string
 ```
 
-**API**
+### 降级策略
+如果 puppeteer 不可用或渲染失败：
+- ✅ 所有功能保持正常工作。
+- ✅ 自动切换为纯文本输出。
+- ✅ 交互逻辑保持一致。
+- ✅ 用户体验无缝切换，无需额外配置。
 
-本插件提供可被其他插件直接调用的编程接口 `MonetaryBankAPI`，并在 `apply` 中注册为 `ctx.monetaryBank`。该 API 将业务逻辑与命令交互分离，便于测试和复用。
+## 🔌 API 接口
 
-- `getBalance(uid: number, currency: string): Promise<{ total: number; demand: number; fixed: number }>`
-	- 说明：查询指定用户在银行的总资产、活期（可用）与定期（不可用）余额。
+插件注册了 `ctx.monetaryBank` 服务，供其他插件调用：
 
-- `deposit(uid: number, currency: string, amount: number): Promise<{ success: boolean; newCash?: number; newBalance?: { total:number; demand:number; fixed:number }; error?: string }>`
-	- 说明：将用户的现金存入银行并创建活期记录（会自动尝试创建主货币账户）。返回操作结果与更新后的现金/银行余额。
-
-- `withdraw(uid: number, currency: string, amount: number): Promise<{ success: boolean; newCash?: number; newBalance?: { total:number; demand:number; fixed:number }; error?: string }>`
-	- 说明：从活期中按时间顺序扣除金额并转回用户现金。仅能提取活期部分，返回操作结果与更新后的现金/银行余额。
-
-返回格式说明（统一格式）
-- `success`: 操作是否成功（布尔）
-- `newCash`（可选）：操作后用户主货币表中的现金余额
-- `newBalance`（可选）：操作后银行中归集的余额信息（`{ total, demand, fixed }`）
-- `error`（可选）：失败时的错误消息
-
-API示例（在其他插件中调用）：
-
-```
+```typescript
 // 查询余额
-const balance = await ctx.monetaryBank.getBalance(uid, 'coin')
-console.log(`总资产：${balance.total}, 活期：${balance.demand}, 定期：${balance.fixed}`)
+const balance = await ctx.monetaryBank.getBalance(uid, 'coin');
+// { total: 1000, demand: 800, fixed: 200 }
 
 // 存款
-const res = await ctx.monetaryBank.deposit(uid, 'coin', 100)
-if (res.success) console.log(`存款成功，新现金：${res.newCash}`)
-else console.error(`存款失败：${res.error}`)
+const res = await ctx.monetaryBank.deposit(uid, 'coin', 100);
+// { success: true, newCash: 50, newBalance: { ... } }
 
 // 取款
-const res2 = await ctx.monetaryBank.withdraw(uid, 'coin', 50)
-if (res2.success) console.log(`取款成功，新现金：${res2.newCash}`)
-else console.error(`取款失败：${res2.error}`)
+const res2 = await ctx.monetaryBank.withdraw(uid, 'coin', 50);
 ```
 
-**利息结算**
-- 若在配置中启用 `enableInterest`，插件会在后台启动定时任务，每日0点检查并结算到期记录（对 `day/week/month` 周期分别按设定处理）。
-- 到期的定期记录可以：延期（若用户已申请）或转为活期并结算利息。
+## 📅 利息结算
 
-**附加说明**
-- 本插件为尽量通用的实现：在读取外部 `monetary` 表时会尝试 `uid` 或 `id` 作为查询键，并尝试常见数值字段（如 `value`, `balance`, `amount`, `coin` 等）。若无法自动创建或更新主货币记录，将记录日志并返回错误提示，请管理员检查主表结构。
-- 插件会在首次运行时尝试创建 `monetary_bank_int` 表（若数据库支持并且表不存在）。
+若启用 `enableInterest`，插件会启动定时任务（每日0点）：
+- 检查到期的定期存款。
+- 根据用户设置（自动延期或转活期）进行处理。
+- 结算活期利息（按配置周期）。
+- 自动合并碎片化的活期记录以优化性能。
 
-**开发者/贡献**
-- 插件作者: BYWled
-- 仓库: `koishi-plugin-monetary-bank`
+## 💻 开发扩展
 
+### 扩展图形化页面
+插件内部使用 `src/templates.ts` 中的组件构建页面。开发者可参考以下模式扩展：
 
-**更新日志**
+```typescript
+import { renderHeader, renderBalanceCard, renderPromptBox, getBaseTemplate } from './templates';
 
-- **1.2.1**
-    - 修复插件主页异常的问题
+// 构建 HTML 内容
+const content = `
+  ${renderHeader('🎯', '自定义页面', username)}
+  ${renderBalanceCard('数据展示', 1000, 'coin')}
+  ${renderPromptBox('提示', '这是一个自定义页面', 'info')}
+`;
 
-- **1.2.0**
-	- 新增：`MonetaryBankAPI` 类并导出为 `ctx.monetaryBank`（接口方法：`getBalance` / `deposit` / `withdraw`），所有方法返回统一格式 `{ success, newCash?, newBalance?, error? }`，便于其他插件以编程方式调用。
-	- 新增：在 `apply` 向 `Context` 注册 `monetaryBank`（`ctx.monetaryBank = new MonetaryBankAPI(ctx, config)`），并在类型声明中扩展 `Context`。
-	- 重构：命令接口使用新的 API：
-		- `bank.bal [currency]` 使用 `ctx.monetaryBank.getBalance()`，支持可选参数输入货币并改进显示为“活期（可用）/定期（不可用）”。
-		- `bank.in [amount]` 支持可选参数；无参数时交互式提示 `请输入存款金额（正整数或 all）：`，支持 `all` 将全部现金存入；使用 `ctx.monetaryBank.deposit()` 执行业务逻辑。
-		- `bank.out [amount]` 支持可选参数；无参数时交互式提示并展示当前活期余额，支持 `all` 将全部活期取出；使用 `ctx.monetaryBank.withdraw()`。
-	- 改进：利息结算流程中在结算完成后合并相同组别的活期记录（`mergeDemandRecords`），减少碎片小额记录，提升性能与可读性。
-	- 改进：交互文本与超时处理更友好（30s 超时提示取消）。
+// 生成完整 HTML
+const html = getBaseTemplate(content);
 
-- **1.1.1**
-	- 修复了代码未构建的问题。
+// 渲染为图片 (需处理 puppeteer 依赖)
+const image = await ctx.puppeteer.render(html);
+```
 
-- **1.1.0** 
-	- 增加：命令 `bank.fixed`, `bank.fixed.manage` 与更完善的交互流程
-	- 增加：活期/定期利息配置与结算调度（可配置开启）
-	- 改进：兼容更多 `monetary` 表字段，增强容错与自动创建最小记录的能力
-	- **注意**：本版本重构了数据库，因此旧的数据库中的**数据将丢失**，请在更新前做好**数据备份**！
-- **1.0.1**
-	- 修复依赖版本问题
-- **1.0.0**
-	- 初始发布，提供银行存取与查询功能 `bank.in`, `bank.out`, `bank.bal`
+## 📝 更新日志
+
+### v2.0.0-Alpha.1
+**🎨 图形化大版本更新**
+
+- **新增**: 银行首页 `bank` 命令，图形化展示账户与导航。
+- **新增**: 完整的图形化交互系统（存款/取款确认、定期方案选择、结果展示）。
+- **新增**: 模板组件系统 (`src/templates.ts`)，提供10+可复用组件。
+- **新增**: 定期延期管理的图形化界面（申请延期/取消延期/成功页面）。
+- **改进**: 智能检测 puppeteer，支持自动降级为文本模式。
+- **改进**: UI 视觉升级，采用轻盈渐变配色，精简间距，现代化设计。
+- **优化**: 统一了所有命令的交互流程与视觉体验。
+- **优化**: 图形渲染性能优化，减少冗余发送。
+- **修复**: 热重载时服务重复注册问题（添加 registry 检测机制）。
+- **修复**: TypeScript 类型声明问题（puppeteer 可选依赖）。
+- **文档**: 整合 CHANGELOG.md 和 GRAPHICS_GUIDE.md 至 README。
+
+**⚠️ 已知问题**:
+- 某些 Koishi 环境下热重载仍可能出现服务注册警告（影响使用）。
+
+### v1.2.1
+- 修复插件主页异常的问题
+
+### v1.2.0
+- **新增**: `MonetaryBankAPI` 类并导出为 `ctx.monetaryBank`（接口方法：`getBalance` / `deposit` / `withdraw`），所有方法返回统一格式。
+- **新增**: 在 `apply` 向 `Context` 注册 `monetaryBank` 服务，并在类型声明中扩展 `Context`。
+- **重构**: 命令接口使用新的 API：
+  - `bank.bal [currency]` 使用 `ctx.monetaryBank.getBalance()`，支持可选参数输入货币并改进显示为"活期（可用）/定期（不可用）"。
+  - `bank.in [amount]` 支持可选参数；无参数时交互式提示，支持 `all` 将全部现金存入。
+  - `bank.out [amount]` 支持可选参数；无参数时交互式提示并展示当前活期余额，支持 `all` 将全部活期取出。
+- **改进**: 利息结算流程中在结算完成后合并相同组别的活期记录（`mergeDemandRecords`），减少碎片小额记录，提升性能与可读性。
+- **改进**: 交互文本与超时处理更友好（30s 超时提示取消）。
+
+### v1.1.1
+- 修复了代码未构建的问题。
+
+### v1.1.0
+- **新增**: 命令 `bank.fixed`, `bank.fixed.manage` 与更完善的交互流程。
+- **新增**: 活期/定期利息配置与结算调度（可配置开启）。
+- **改进**: 兼容更多 `monetary` 表字段，增强容错与自动创建最小记录的能力。
+- **⚠️ 注意**: 本版本重构了数据库，因此旧的数据库中的**数据将丢失**，请在更新前做好**数据备份**！
+
+### v1.0.1
+- 修复依赖版本问题。
+
+### v1.0.0
+- 初始发布，提供银行存取与查询功能 `bank.in`, `bank.out`, `bank.bal`。
 
 ---
+
+**开发者**: BYWled
+**仓库**: `koishi-plugin-monetary-bank`
 
 萌新编写，部分借助了AI的力量，若有纰漏，还望海涵QwQ
