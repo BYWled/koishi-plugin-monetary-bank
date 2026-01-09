@@ -6,6 +6,7 @@ export const name = 'monetary-bank'
 // 定义配置接口
 export interface Config {
   defaultCurrency?: string  // 默认货币名称
+  themeMode?: 'auto' | 'light' | 'dark' // 主题模式
   debug?: boolean
   enableInterest?: boolean  // 是否启用定期利息功能
   demandInterest?: {
@@ -25,6 +26,9 @@ export const Config: Schema<Config> = Schema.object({
   defaultCurrency: Schema.string()
     .description('默认货币名称')
     .default('coin'),
+  themeMode: Schema.union(['auto', 'light', 'dark'])
+    .description('主题模式：auto=跟随时间，light=浅色，dark=深色')
+    .default('auto'),
   debug: Schema.boolean()
     .description('开启调试日志（显示 info/success 等非 error/warn 日志）')
     .default(true),
@@ -254,6 +258,18 @@ export interface MonetaryBankInterest {
 }
 
 /**
+ * 获取当前主题是否为深色模式
+ */
+function getTheme(config: Config): boolean {
+  if (config.themeMode === 'light') return false
+  if (config.themeMode === 'dark') return true
+  
+  // auto mode: 18:00 - 6:00 is dark
+  const hour = new Date().getHours()
+  return hour >= 18 || hour < 6
+}
+
+/**
  * 初始化数据库模型
  * 创建 monetary_bank_int 表用于存储所有存款记录（活期和定期）
  */
@@ -281,7 +297,7 @@ async function initDatabase(ctx: Context): Promise<boolean> {
           nullable: false,
         },
         amount: {
-          type: 'unsigned',
+          type: 'double',
           nullable: false,
         },
         type: {
@@ -726,23 +742,12 @@ export async function apply(ctx: Context, config: Config) {
 
   logSuccess('✓ monetary-bank 插件加载成功')
 
-  // 注册银行API服务（使用provide机制，支持热重载）
+  // 注册银行API服务
   const api = new MonetaryBankAPI(ctx, config)
-  // 避免热重载重复注册导致报错
-  const registry = (ctx as any).registry || (ctx as any).$registry
-  const alreadyProvided = !!(registry?.services?.has?.('monetaryBank'))
-
-  if (!alreadyProvided) {
-    try {
-      ctx.provide('monetaryBank', api)
-    } catch (err: any) {
-      // 热重载可能仍提示已注册，忽略即可
-      logger.warn('monetaryBank 服务已存在，跳过重新注册')
-    }
-  }
-
-  // 兼容性：同时挂载到ctx上，供内部使用
-  ctx.monetaryBank = api
+  
+  // 使用 ctx.set() 注册服务，支持热重载时自动覆盖
+  // 这种方式不会在重复注册时抛出错误
+  ctx.set('monetaryBank', api)
 
   // 注册主命令：银行首页
   ctx.command('bank', '银行服务')
@@ -785,7 +790,8 @@ export async function apply(ctx: Context, config: Config) {
         }
 
         // 使用图形化渲染
-        return await renderBankBalanceImage(session.username || session.userId, balance, currency)
+        const demandRate = config.demandInterest?.rate ?? 0.25
+        return await renderBankBalanceImage(session.username || session.userId, balance, currency, demandRate)
 
       } catch (error) {
         logger.error('查询存款失败:', error)
@@ -1289,7 +1295,7 @@ export async function apply(ctx: Context, config: Config) {
       ${renderCommandGrid(commands)}
     `
 
-    const html = getBaseTemplate(content, 800)
+    const html = getBaseTemplate(content, 800, getTheme(config))
     const fallback = `🏦 银行服务中心\n\n账户信息：\n现金：${cash} ${currency}\n银行总资产：${balance.total} ${currency}\n  - 活期：${balance.demand} ${currency}\n  - 定期：${balance.fixed} ${currency}\n\n可用命令：\n${commands.map(c => `${c.icon} ${c.name} - ${c.desc}`).join('\n')}`
     
     return await renderToImage(html, fallback)
@@ -1317,7 +1323,7 @@ export async function apply(ctx: Context, config: Config) {
       ${renderPromptBox('温馨提示', '存入后将自动转为活期存款，可随时取出', 'info')}
     `
 
-    const html = getBaseTemplate(content)
+    const html = getBaseTemplate(content, 520, getTheme(config))
     const fallback = generateDepositConfirmMessage(amount, currency, cash)
     
     return await renderToImage(html, fallback)
@@ -1345,7 +1351,7 @@ export async function apply(ctx: Context, config: Config) {
       ${renderPromptBox('温馨提示', '仅可从活期存款中取出，定期需到期后自动转活期', 'warning')}
     `
 
-    const html = getBaseTemplate(content)
+    const html = getBaseTemplate(content, 520, getTheme(config))
     const fallback = generateWithdrawConfirmMessage(amount, currency, balance)
     
     return await renderToImage(html, fallback)
@@ -1357,7 +1363,8 @@ export async function apply(ctx: Context, config: Config) {
   async function renderBankBalanceImage(
     username: string,
     balance: { total: number; demand: number; fixed: number },
-    currency: string
+    currency: string,
+    demandRate: number = 0.25
   ) {
     const demandPercent = balance.total > 0 ? (balance.demand / balance.total * 100).toFixed(1) : '0'
     const fixedPercent = balance.total > 0 ? (balance.fixed / balance.total * 100).toFixed(1) : '0'
@@ -1366,13 +1373,13 @@ export async function apply(ctx: Context, config: Config) {
       ${renderHeader('🏦', '银行资产', username)}
       ${renderBalanceCard('总资产', balance.total, currency)}
       <div class="grid">
-        ${renderGridItem('💵', '可用资产（活期）', balance.demand, `占比 ${demandPercent}%`, 'demand')}
+        ${renderGridItem('💵', '可用资产（活期）', balance.demand, `利率 ${demandRate}% | 占比 ${demandPercent}%`, 'demand')}
         ${renderGridItem('🔒', '不可用资产（定期）', balance.fixed, `占比 ${fixedPercent}%`, 'fixed')}
       </div>
     `
 
-    const html = getBaseTemplate(content)
-    const fallback = `您的银行资产：\n总资产：${balance.total} ${currency}\n可用资产（活期）：${balance.demand} ${currency}\n不可用资产（定期）：${balance.fixed} ${currency}`
+    const html = getBaseTemplate(content, 520, getTheme(config))
+    const fallback = `您的银行资产：\n总资产：${balance.total} ${currency}\n可用资产（活期）：${balance.demand} ${currency} (利率 ${demandRate}%)\n不可用资产（定期）：${balance.fixed} ${currency}`
     
     return await renderToImage(html, fallback)
   }
@@ -1401,7 +1408,7 @@ export async function apply(ctx: Context, config: Config) {
       </div>
     `
 
-    const html = getBaseTemplate(content)
+    const html = getBaseTemplate(content, 520, getTheme(config))
     const fallback = `成功存入 ${amount} ${currency}（活期）！\n现金余额：${newCash} ${currency}\n银行总资产：${newBalance.total} ${currency}`
     
     return await renderToImage(html, fallback)
@@ -1431,7 +1438,7 @@ export async function apply(ctx: Context, config: Config) {
       </div>
     `
 
-    const html = getBaseTemplate(content)
+    const html = getBaseTemplate(content, 520, getTheme(config))
     const fallback = `成功取出 ${amount} ${currency}！\n现金余额：${newCash} ${currency}\n银行总资产：${newBalance.total} ${currency}`
     
     return await renderToImage(html, fallback)
@@ -1477,7 +1484,7 @@ export async function apply(ctx: Context, config: Config) {
       </div>
     `
 
-    const html = getBaseTemplate(content, 900)
+    const html = getBaseTemplate(content, 900, getTheme(config))
     const fallback = '您的定期存款：\n' + records.map((r, i) => 
       `${i+1}. ${r.rate}%/${r.cycle} - ${r.amount} ${currency}`
     ).join('\n')
@@ -1525,7 +1532,7 @@ export async function apply(ctx: Context, config: Config) {
       </div>
     `
 
-    const html = getBaseTemplate(content, 900)
+    const html = getBaseTemplate(content, 900, getTheme(config))
     const fallback = '可选方案：\n' + plans.map((p, i) => 
       `${i+1}. ${p.name} - ${p.rate}% / ${p.cycle}`
     ).join('\n')
@@ -1570,7 +1577,7 @@ export async function apply(ctx: Context, config: Config) {
       ${renderPromptBox('温馨提示', '定期存款到期后将自动转为活期，或可在管理中申请延期续存', 'info')}
     `
 
-    const html = getBaseTemplate(content)
+    const html = getBaseTemplate(content, 520, getTheme(config))
     const fallback = `成功申请定期存款！\n方案：${planName}\n金额：${amount} ${currency}\n利率：${rate}% / ${cycleText}\n来源：现金 ${fromCash} + 活期 ${fromDemand}\n到期日：${dueDate}\n银行总资产：${newBalance.total} ${currency}`
     
     return await renderToImage(html, fallback)
@@ -1610,7 +1617,7 @@ export async function apply(ctx: Context, config: Config) {
       ${renderPromptBox('操作提示', '请输入方案编号，或输入 0 返回', 'warning')}
     `
 
-    const html = getBaseTemplate(content, 800)
+    const html = getBaseTemplate(content, 800, getTheme(config))
     const fallback = '可选续期方案：\n' + plans.map((p, i) => 
       `${i+1}. ${p.name} - ${p.rate}% / ${p.cycle === 'day' ? '日' : p.cycle === 'week' ? '周' : '月'}`
     ).join('\n')
@@ -1640,7 +1647,7 @@ export async function apply(ctx: Context, config: Config) {
       ${renderPromptBox('注意', '取消后，定期存款到期将自动转为活期存款', 'warning')}
     `
 
-    const html = getBaseTemplate(content)
+    const html = getBaseTemplate(content, 520, getTheme(config))
     const fallback = `当前已申请延期至：${currentPlan}\n取消后到期将自动转为活期\n确认取消请输入 yes 或 y`
     
     return await renderToImage(html, fallback)
@@ -1671,7 +1678,7 @@ export async function apply(ctx: Context, config: Config) {
         ${renderPromptBox('提示', '到期后本金+利息将转入活期账户，可随时取出', 'info')}
       `
 
-      const html = getBaseTemplate(content)
+      const html = getBaseTemplate(content, 520, getTheme(config))
       const fallback = `已取消延期申请\n定期金额：${amount} ${currency}\n到期后将自动转为活期`
       
       return await renderToImage(html, fallback)
@@ -1689,7 +1696,7 @@ export async function apply(ctx: Context, config: Config) {
         ${renderPromptBox('提示', '到期后本金+利息将按新方案继续存入定期', 'info')}
       `
 
-      const html = getBaseTemplate(content)
+      const html = getBaseTemplate(content, 520, getTheme(config))
       const fallback = `延期申请成功！\n方案：${planName}\n利率：${rate}% / ${cycleText}\n定期金额：${amount} ${currency}`
       
       return await renderToImage(html, fallback)
