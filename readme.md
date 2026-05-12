@@ -1,14 +1,24 @@
-# koishi-plugin-monetary-bank | 货币银行
+<h1 align="center">koishi-plugin-monetary-bank</h1>
 
-[![npm](https://img.shields.io/npm/v/koishi-plugin-monetary-bank?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-monetary-bank) [![GitHub stars](https://img.shields.io/github/stars/BYWled/koishi-plugin-monetary-bank?style=flat-square&logo=github)](https://github.com/BYWled/koishi-plugin-monetary-bank) [![Gitee](https://img.shields.io/badge/Gitee-Project-c71d23?style=flat-square&logo=gitee&logoColor=white)](https://gitee.com/BYWled/koishi-plugin-monetary-bank)
+<p align="center">
+  为 monetary 插件（或外部项目中的主货币表）提供轻量级银行功能，支持活期/定期存款与利息结算。
+</p>
 
-`Provides banking related services for monetary money`
+<p align="center">
+  <a href="https://www.npmjs.com/package/koishi-plugin-monetary-bank"><img src="https://img.shields.io/npm/v/koishi-plugin-monetary-bank?style=for-the-badge&logo=npm" alt="npm" /></a>
+  <a href="https://github.com/BYWled/koishi-plugin-monetary-bank"><img src="https://img.shields.io/github/stars/BYWled/koishi-plugin-monetary-bank?style=for-the-badge&logo=github" alt="GitHub Stars" /></a>
+</p>
 
-`为 monetary 插件（或外部项目中的主货币表）提供轻量级银行功能，支持活期/定期存款与利息结算。`
+<p align="center">
+  <a href="https://gitee.com/BYWled/koishi-plugin-monetary-bank"><img src="https://img.shields.io/badge/Gitee-代码镜像-C71D23?style=for-the-badge&logo=gitee&logoColor=white" alt="Gitee Mirror" /></a>
+</p>
 
----
+<p align="center">
+  <a href="https://github.com/BYWled/koishi-plugin-monetary-bank">GitHub</a> ·
+  <a href="https://gitee.com/BYWled/koishi-plugin-monetary-bank">Gitee</a>
+</p>
 
-**版本**: v2.1.0
+> 版本：**2.2.0**
 
 ## ✨ 特点
 
@@ -203,7 +213,7 @@ import { renderHeader, renderBalanceCard, renderPromptBox, getBaseTemplate } fro
 
 // 构建 HTML 内容
 const content = `
-  ${renderHeader('🎯', '自定义页面', username)}
+  ${renderHeader('manage', '自定义页面', username)}
   ${renderBalanceCard('数据展示', 1000, 'coin')}
   ${renderPromptBox('提示', '这是一个自定义页面', 'info')}
 `;
@@ -225,3 +235,7 @@ const image = await ctx.puppeteer.render(html);
 **仓库**: `koishi-plugin-monetary-bank`
 
 萌新编写，部分借助了AI的力量，若有纰漏，还望海涵QwQ
+
+## 🙏 第三方资源/致谢
+
+- Roboto Mono 字体（SIL OPEN FONT LICENSE Version 1.1）：https://fonts.google.com/specimen/Roboto+Mono

@@ -1270,24 +1270,24 @@ export async function apply(ctx: Context, config: Config) {
     interestEnabled: boolean
   ) {
     const commands = [
-      { icon: '💰', name: 'bank.bal', desc: '查询存款余额' },
-      { icon: '📥', name: 'bank.in', desc: '存入现金' },
-      { icon: '📤', name: 'bank.out', desc: '取出现金' }
+      { icon: 'balance', name: 'bank.bal', desc: '查询存款余额' },
+      { icon: 'deposit', name: 'bank.in', desc: '存入现金' },
+      { icon: 'withdraw', name: 'bank.out', desc: '取出现金' }
     ]
     
     if (interestEnabled) {
       commands.push(
-        { icon: '🔒', name: 'bank.fixed', desc: '申请定期存款' },
-        { icon: '⚙️', name: 'bank.fixed.manage', desc: '管理定期存款' }
+        { icon: 'fixed', name: 'bank.fixed', desc: '申请定期存款' },
+        { icon: 'manage', name: 'bank.fixed.manage', desc: '管理定期存款' }
       )
     }
 
     const content = `
-      ${renderHeader('🏦', '欢迎使用银行', username)}
+      ${renderHeader('bank', '欢迎使用银行', username)}
       
       <div class="grid">
-        ${renderGridItem('💵', '现金余额', cash, '可用于存款', 'cash')}
-        ${renderGridItem('🏦', '银行总资产', balance.total, `活期 ${balance.demand} + 定期 ${balance.fixed}`, 'bank')}
+        ${renderGridItem('cash', '现金余额', cash, '可用于存款', 'cash')}
+        ${renderGridItem('bank', '银行总资产', balance.total, `活期 ${balance.demand} + 定期 ${balance.fixed}`, 'bank')}
       </div>
       
       ${renderPromptBox('可用命令', '点击下方命令查看详情或直接输入使用', 'info')}
@@ -1296,7 +1296,7 @@ export async function apply(ctx: Context, config: Config) {
     `
 
     const html = getBaseTemplate(content, 800, getTheme(config))
-    const fallback = `🏦 银行服务中心\n\n账户信息：\n现金：${cash} ${currency}\n银行总资产：${balance.total} ${currency}\n  - 活期：${balance.demand} ${currency}\n  - 定期：${balance.fixed} ${currency}\n\n可用命令：\n${commands.map(c => `${c.icon} ${c.name} - ${c.desc}`).join('\n')}`
+    const fallback = `银行服务中心\n\n账户信息：\n现金：${cash} ${currency}\n银行总资产：${balance.total} ${currency}\n  - 活期：${balance.demand} ${currency}\n  - 定期：${balance.fixed} ${currency}\n\n可用命令：\n${commands.map(c => `${c.name} - ${c.desc}`).join('\n')}`
     
     return await renderToImage(html, fallback)
   }
@@ -1311,7 +1311,7 @@ export async function apply(ctx: Context, config: Config) {
     cash: number
   ) {
     const content = `
-      ${renderHeader('💰', '存款确认', username)}
+      ${renderHeader('deposit', '存款确认', username)}
       
       ${renderConfirmDialog('请确认存款信息', [
         { label: '存款金额', value: `${amount.toLocaleString()} ${currency}` },
@@ -1339,7 +1339,7 @@ export async function apply(ctx: Context, config: Config) {
     balance: number
   ) {
     const content = `
-      ${renderHeader('💸', '取款确认', username)}
+      ${renderHeader('withdraw', '取款确认', username)}
       
       ${renderConfirmDialog('请确认取款信息', [
         { label: '取款金额', value: `${amount.toLocaleString()} ${currency}` },
@@ -1370,11 +1370,11 @@ export async function apply(ctx: Context, config: Config) {
     const fixedPercent = balance.total > 0 ? (balance.fixed / balance.total * 100).toFixed(1) : '0'
 
     const content = `
-      ${renderHeader('🏦', '银行资产', username)}
+      ${renderHeader('balance', '银行资产', username)}
       ${renderBalanceCard('总资产', balance.total, currency)}
       <div class="grid">
-        ${renderGridItem('💵', '可用资产（活期）', balance.demand, `利率 ${demandRate}% | 占比 ${demandPercent}%`, 'demand')}
-        ${renderGridItem('🔒', '不可用资产（定期）', balance.fixed, `占比 ${fixedPercent}%`, 'fixed')}
+        ${renderGridItem('demand', '可用资产（活期）', balance.demand, `利率 ${demandRate}% | 占比 ${demandPercent}%`, 'demand')}
+        ${renderGridItem('fixed', '不可用资产（定期）', balance.fixed, `占比 ${fixedPercent}%`, 'fixed')}
       </div>
     `
 
@@ -1395,7 +1395,7 @@ export async function apply(ctx: Context, config: Config) {
     newBalance: { total: number; demand: number; fixed: number }
   ) {
     const content = `
-      ${renderHeader('💰', '存款成功', username)}
+      ${renderHeader('success', '存款成功', username)}
       ${renderBalanceCard('存入金额', amount, currency)}
       <div class="card success">
         ${renderInfoRow('存款类型', '活期存款')}
@@ -1403,8 +1403,8 @@ export async function apply(ctx: Context, config: Config) {
         ${renderInfoRow('银行总资产', `${newBalance.total.toLocaleString()} ${currency}`, 'success')}
       </div>
       <div class="grid">
-        ${renderGridItem('💵', '活期资产', newBalance.demand, '可随时取出', 'demand')}
-        ${renderGridItem('🔒', '定期资产', newBalance.fixed, '到期自动转活期', 'fixed')}
+        ${renderGridItem('demand', '活期资产', newBalance.demand, '可随时取出', 'demand')}
+        ${renderGridItem('fixed', '定期资产', newBalance.fixed, '到期自动转活期', 'fixed')}
       </div>
     `
 
@@ -1425,7 +1425,7 @@ export async function apply(ctx: Context, config: Config) {
     newBalance: { total: number; demand: number; fixed: number }
   ) {
     const content = `
-      ${renderHeader('💸', '取款成功', username)}
+      ${renderHeader('success', '取款成功', username)}
       ${renderBalanceCard('取出金额', amount, currency)}
       <div class="card success">
         ${renderInfoRow('取款来源', '活期存款')}
@@ -1433,8 +1433,8 @@ export async function apply(ctx: Context, config: Config) {
         ${renderInfoRow('银行总资产', `${newBalance.total.toLocaleString()} ${currency}`)}
       </div>
       <div class="grid">
-        ${renderGridItem('💰', '现金余额', newCash, '可用于消费', 'cash')}
-        ${renderGridItem('🏦', '银行余额', newBalance.total, '继续生息', 'bank')}
+        ${renderGridItem('cash', '现金余额', newCash, '可用于消费', 'cash')}
+        ${renderGridItem('bank', '银行余额', newBalance.total, '继续生息', 'bank')}
       </div>
     `
 
@@ -1476,7 +1476,7 @@ export async function apply(ctx: Context, config: Config) {
     const totalAmount = records.reduce((sum, r) => sum + r.amount, 0)
 
     const content = `
-      ${renderHeader('📋', '定期存款管理', username)}
+      ${renderHeader('manage', '定期存款管理', username)}
       ${renderBalanceCard('定期总额', totalAmount, currency)}
       ${renderPromptBox('管理说明', '请输入编号选择要管理的定期存款，输入 0 退出', 'info')}
       <div style="margin-bottom: 20px;">
@@ -1518,11 +1518,11 @@ export async function apply(ctx: Context, config: Config) {
     }).join('')
 
     const content = `
-      ${renderHeader('🔒', '申请定期存款', username)}
+      ${renderHeader('fixed', '申请定期存款', username)}
       
       <div class="grid">
-        ${renderGridItem('💵', '可用现金', cash, '优先扣除', 'cash')}
-        ${renderGridItem('🏦', '活期存款', demand, '现金不足时扣除', 'demand')}
+        ${renderGridItem('cash', '可用现金', cash, '优先扣除', 'cash')}
+        ${renderGridItem('demand', '活期存款', demand, '现金不足时扣除', 'demand')}
       </div>
       
       ${renderPromptBox('方案选择', '请输入方案编号，或输入 0 取消', 'info')}
@@ -1560,7 +1560,7 @@ export async function apply(ctx: Context, config: Config) {
     const dueDate = settlementDate.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' })
 
     const content = `
-      ${renderHeader('🔒', '定期存款成功', username)}
+      ${renderHeader('success', '定期存款成功', username)}
       ${renderBalanceCard('存入金额', amount, currency)}
       
       <div class="card success">
@@ -1570,8 +1570,8 @@ export async function apply(ctx: Context, config: Config) {
       </div>
       
       <div class="grid">
-        ${renderGridItem('💵', '当前现金', newCash, '可用于消费', 'cash')}
-        ${renderGridItem('🏦', '银行总资产', newBalance.total, `活期 ${newBalance.demand} + 定期 ${newBalance.fixed}`, 'bank')}
+        ${renderGridItem('cash', '当前现金', newCash, '可用于消费', 'cash')}
+        ${renderGridItem('bank', '银行总资产', newBalance.total, `活期 ${newBalance.demand} + 定期 ${newBalance.fixed}`, 'bank')}
       </div>
       
       ${renderPromptBox('温馨提示', '定期存款到期后将自动转为活期，或可在管理中申请延期续存', 'info')}
@@ -1608,7 +1608,7 @@ export async function apply(ctx: Context, config: Config) {
     }).join('')
 
     const content = `
-      ${renderHeader('⚙️', '申请延期续存', username)}
+      ${renderHeader('clock', '申请延期续存', username)}
       ${renderBalanceCard('当前定期金额', currentAmount, currency)}
       ${renderPromptBox('延期说明', '到期后将按选择的新方案继续存款，本金+利息自动续存', 'info')}
       <div style="margin-bottom: 20px;">
@@ -1635,7 +1635,7 @@ export async function apply(ctx: Context, config: Config) {
     currentPlan: string
   ) {
     const content = `
-      ${renderHeader('⚠️', '取消延期申请', username)}
+      ${renderHeader('warning', '取消延期申请', username)}
       ${renderBalanceCard('定期金额', amount, currency)}
       
       ${renderConfirmDialog('请确认取消延期', [
@@ -1667,7 +1667,7 @@ export async function apply(ctx: Context, config: Config) {
   ) {
     if (action === 'cancel') {
       const content = `
-        ${renderHeader('✅', '取消成功', username)}
+        ${renderHeader('success', '取消成功', username)}
         ${renderBalanceCard('定期金额', amount, currency)}
         
         <div class="card success">
@@ -1685,7 +1685,7 @@ export async function apply(ctx: Context, config: Config) {
     } else {
       const cycleText = cycle === 'day' ? '日' : cycle === 'week' ? '周' : '月'
       const content = `
-        ${renderHeader('✅', '延期申请成功', username)}
+        ${renderHeader('success', '延期申请成功', username)}
         ${renderBalanceCard('定期金额', amount, currency)}
         
         <div class="card success">

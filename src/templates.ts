@@ -1,13 +1,77 @@
+import fs from "fs";
+import path from "path";
+import { pathToFileURL } from "url";
+
 /**
  * HTML模板工具文件
  * 提供统一的样式和布局模板
  * 设计风格：深色玻璃拟态，与 monetary-bourse 保持一致
  */
 
+const ASSET_BASE_PATH = path.resolve(__dirname, "..", "assets");
+const ASSET_BASE_URL = pathToFileURL(ASSET_BASE_PATH)
+  .toString()
+  .replace(/\/$/, "");
+
+const ICON_MAP: Record<string, string> = {
+  bank: "icons/bank.svg",
+  balance: "icons/balance.svg",
+  cash: "icons/cash.svg",
+  demand: "icons/demand.svg",
+  fixed: "icons/fixed.svg",
+  deposit: "icons/deposit.svg",
+  withdraw: "icons/withdraw.svg",
+  manage: "icons/manage.svg",
+  success: "icons/success.svg",
+  warning: "icons/warning.svg",
+  clock: "icons/clock.svg",
+};
+
+function getAssetUrl(relativePath: string): string {
+  return `${ASSET_BASE_URL}/${relativePath}`;
+}
+
+const ICON_DATA_URLS: Record<string, string> = {};
+
+for (const [key, file] of Object.entries(ICON_MAP)) {
+  try {
+    const absolutePath = path.resolve(ASSET_BASE_PATH, file);
+    const buffer = fs.readFileSync(absolutePath);
+    ICON_DATA_URLS[key] =
+      `data:image/svg+xml;base64,${buffer.toString("base64")}`;
+  } catch {
+    ICON_DATA_URLS[key] = "";
+  }
+}
+
+function getIconUrl(iconName: string): string {
+  const key = String(iconName || "").toLowerCase();
+  const dataUrl = ICON_DATA_URLS[key];
+  if (dataUrl) return dataUrl;
+
+  const file = ICON_MAP[key];
+  return file ? getAssetUrl(file) : "";
+}
+
+function renderIcon(iconName: string, className: string, alt: string): string {
+  const src = getIconUrl(iconName);
+  if (!src) {
+    return `<span class="${className} icon-fallback" aria-hidden="true">?</span>`;
+  }
+
+  return `<img class="${className}" src="${src}" alt="${alt}" />`;
+}
+
 /**
  * 通用HTML模板基础
  */
-export function getBaseTemplate(content: string, width: number = 520, isDark: boolean = false): string {
+export function getBaseTemplate(
+  content: string,
+  width: number = 520,
+  isDark: boolean = false,
+): string {
+  const fontRegularUrl = getAssetUrl("fonts/RobotoMono-Regular.ttf");
+  const fontBoldUrl = getAssetUrl("fonts/RobotoMono-Bold.ttf");
   // 深色模式变量 (Dark Mode)
   const darkVars = `
       /* 统一配色 - 深色玻璃拟态 */
@@ -33,7 +97,7 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
       --danger-bg: rgba(248, 113, 113, 0.15);
       --shadow-color: rgba(0, 0, 0, 0.6);
       --separator-color: rgba(48, 54, 61, 0.5);
-  `
+  `;
 
   // 浅色模式变量 (Light Mode)
   // 调整说明：增强阴影，使用深色微边框替代白色高光边框，显著提升对比度
@@ -61,15 +125,15 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
       --danger-bg: rgba(239, 68, 68, 0.15);
       --shadow-color: rgba(100, 116, 139, 0.2);
       --separator-color: rgba(0, 0, 0, 0.08);
-  `
+  `;
 
-  const bgStyle = isDark 
+  const bgStyle = isDark
     ? `background: radial-gradient(circle at 0% 0%, #1a2332 0%, transparent 50%), 
                   radial-gradient(circle at 100% 100%, #161b22 0%, transparent 50%),
                   var(--bg-color);`
     : `background: radial-gradient(circle at 0% 0%, #e0f2fe 0%, transparent 50%), 
                   radial-gradient(circle at 100% 100%, #f0f9ff 0%, transparent 50%),
-                  var(--bg-color);`
+                  var(--bg-color);`;
 
   return `
 <!DOCTYPE html>
@@ -77,6 +141,22 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
 <head>
   <meta charset="UTF-8">
   <style>
+    @font-face {
+      font-family: 'Roboto Mono';
+      src: url('${fontRegularUrl}') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+
+    @font-face {
+      font-family: 'Roboto Mono';
+      src: url('${fontBoldUrl}') format('truetype');
+      font-weight: 700;
+      font-style: normal;
+      font-display: swap;
+    }
+
     :root {
       ${isDark ? darkVars : lightVars}
     }
@@ -87,7 +167,7 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
       position: relative;
       margin: 0;
       padding: 32px;
-      font-family: 'Roboto Mono', 'Trebuchet MS', 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      font-family: 'Roboto Mono', 'PingFang SC', 'Microsoft YaHei', sans-serif;
       ${bgStyle}
       width: ${width}px;
       box-sizing: border-box;
@@ -128,6 +208,12 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
       font-size: 24px;
       box-shadow: 0 8px 16px rgba(88, 166, 255, 0.3);
       flex-shrink: 0;
+    }
+
+    .avatar-icon {
+      width: 24px;
+      height: 24px;
+      display: block;
     }
     
     .header-content {
@@ -272,7 +358,9 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
     }
     
     .item-icon {
-      font-size: 18px;
+      width: 18px;
+      height: 18px;
+      display: block;
     }
     
     .item-title {
@@ -352,11 +440,14 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
     .cmd-item {
       background: var(--item-bg);
       border-radius: 12px;
-      padding: 20px 16px;
-      text-align: center;
+      padding: 16px;
+      text-align: left;
       border: 1px solid var(--border-color);
       transition: all 0.2s ease;
       box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      display: flex;
+      align-items: center;
+      gap: 14px;
     }
     
     .cmd-item:hover {
@@ -366,20 +457,31 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
     }
     
     .cmd-icon {
-      font-size: 28px;
-      margin-bottom: 10px;
+      width: 32px;
+      height: 32px;
+      display: block;
+      flex-shrink: 0;
+    }
+
+    .cmd-content {
+      flex: 1;
+      min-width: 0;
     }
     
     .cmd-name {
-      font-size: 14px;
-      font-weight: 600;
+      font-size: 15px;
+      font-weight: 700;
       color: var(--text-primary);
-      margin-bottom: 6px;
+      margin-bottom: 4px;
+      letter-spacing: -0.2px;
     }
     
     .cmd-desc {
       font-size: 12px;
       color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     
     /* Prompt Box */
@@ -527,6 +629,14 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
       background: rgba(88, 166, 255, 0.15);
       color: var(--accent-color);
     }
+
+    .icon-fallback {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      font-size: 14px;
+    }
   </style>
 </head>
 <body>
@@ -536,35 +646,43 @@ export function getBaseTemplate(content: string, width: number = 520, isDark: bo
   </div>
 </body>
 </html>
-  `
+  `;
 }
 
 /**
  * 页面头部
  */
-export function renderHeader(icon: string, title: string, username: string): string {
+export function renderHeader(
+  icon: string,
+  title: string,
+  username: string,
+): string {
   return `
     <div class="header">
-      <div class="avatar">${icon}</div>
+      <div class="avatar">${renderIcon(icon, "avatar-icon", `${title} 图标`)}</div>
       <div class="header-content">
         <div class="title">${title}</div>
       </div>
       <div class="user-info">${username}</div>
     </div>
-  `
+  `;
 }
 
 /**
  * 余额卡片（大标题样式）
  */
-export function renderBalanceCard(label: string, value: number, currency: string): string {
+export function renderBalanceCard(
+  label: string,
+  value: number,
+  currency: string,
+): string {
   return `
     <div class="balance-section">
       <div class="balance-label">${label}</div>
       <div class="balance-value">${value.toLocaleString()}</div>
       <div class="balance-currency">${currency}</div>
     </div>
-  `
+  `;
 }
 
 /**
@@ -575,75 +693,98 @@ export function renderGridItem(
   title: string,
   value: number,
   subtitle: string,
-  type: 'demand' | 'fixed' | 'cash' | 'bank'
+  type: "demand" | "fixed" | "cash" | "bank",
 ): string {
   return `
     <div class="grid-item ${type}">
       <div class="item-header">
-        <span class="item-icon">${icon}</span>
+        ${renderIcon(icon, "item-icon", `${title} 图标`)}
         <span class="item-title">${title}</span>
       </div>
       <div class="item-value">${value.toLocaleString()}</div>
       <div class="item-subtitle">${subtitle}</div>
     </div>
-  `
+  `;
 }
 
 /**
  * 信息行
  */
-export function renderInfoRow(label: string, value: string, valueClass: '' | 'success' | 'error' = ''): string {
+export function renderInfoRow(
+  label: string,
+  value: string,
+  valueClass: "" | "success" | "error" = "",
+): string {
   return `
     <div class="info-row">
       <span class="info-label">${label}</span>
       <span class="info-value ${valueClass}">${value}</span>
     </div>
-  `
+  `;
 }
 
 /**
  * 命令按钮网格
  */
-export function renderCommandGrid(commands: Array<{ icon: string; name: string; desc: string }>): string {
-  const items = commands.map(cmd => `
+export function renderCommandGrid(
+  commands: Array<{ icon: string; name: string; desc: string }>,
+): string {
+  const items = commands
+    .map(
+      (cmd) => `
     <div class="cmd-item">
-      <div class="cmd-icon">${cmd.icon}</div>
-      <div class="cmd-name">${cmd.name}</div>
-      <div class="cmd-desc">${cmd.desc}</div>
+      ${renderIcon(cmd.icon, "cmd-icon", `${cmd.name} 图标`)}
+      <div class="cmd-content">
+        <div class="cmd-name">${cmd.name}</div>
+        <div class="cmd-desc">${cmd.desc}</div>
+      </div>
     </div>
-  `).join('')
-  
-  return `<div class="cmd-grid">${items}</div>`
+  `,
+    )
+    .join("");
+
+  return `<div class="cmd-grid">${items}</div>`;
 }
 
 /**
  * 提示信息框
  */
-export function renderPromptBox(title: string, message: string, type: 'info' | 'warning' | 'success' = 'info'): string {
+export function renderPromptBox(
+  title: string,
+  message: string,
+  type: "info" | "warning" | "success" = "info",
+): string {
   return `
     <div class="prompt-box ${type}">
       <div class="prompt-title">${title}</div>
       <div class="prompt-message">${message}</div>
     </div>
-  `
+  `;
 }
 
 /**
  * 确认对话框样式
  */
-export function renderConfirmDialog(title: string, items: Array<{ label: string; value: string }>): string {
-  const rows = items.map(item => `
+export function renderConfirmDialog(
+  title: string,
+  items: Array<{ label: string; value: string }>,
+): string {
+  const rows = items
+    .map(
+      (item) => `
     <div class="confirm-row">
       <span class="confirm-label">${item.label}</span>
       <span class="confirm-value">${item.value}</span>
     </div>
-  `).join('')
-  
+  `,
+    )
+    .join("");
+
   return `
     <div class="confirm-dialog">
       <div class="confirm-title">${title}</div>
       ${rows}
       <div class="confirm-hint">请回复 yes 或 y 确认，其他内容取消</div>
     </div>
-  `
+  `;
 }
