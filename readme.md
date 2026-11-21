@@ -229,13 +229,13 @@ const image = await ctx.puppeteer.render(html);
 
 详细的更新日志请查看 [CHANGELOG.md](CHANGELOG.md)。
 
+## 🙏 第三方资源/致谢
+
+- Roboto Mono 字体（SIL OPEN FONT LICENSE Version 1.1）：https://fonts.google.com/specimen/Roboto+Mono
+
 ---
 
 **开发者**: BYWled
 **仓库**: `koishi-plugin-monetary-bank`
 
 萌新编写，部分借助了AI的力量，若有纰漏，还望海涵QwQ
-
-## 🙏 第三方资源/致谢
-
-- Roboto Mono 字体（SIL OPEN FONT LICENSE Version 1.1）：https://fonts.google.com/specimen/Roboto+Mono

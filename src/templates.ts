@@ -25,6 +25,9 @@ const ICON_MAP: Record<string, string> = {
   success: "icons/success.svg",
   warning: "icons/warning.svg",
   clock: "icons/clock.svg",
+  transfer: "icons/withdraw.svg",
+  freeze: "icons/clock.svg",
+  help: "icons/manage.svg",
 };
 
 function getAssetUrl(relativePath: string): string {
@@ -72,6 +75,18 @@ export function getBaseTemplate(
 ): string {
   const fontRegularUrl = getAssetUrl("fonts/RobotoMono-Regular.ttf");
   const fontBoldUrl = getAssetUrl("fonts/RobotoMono-Bold.ttf");
+
+  const isNarrow = width <= 680;
+  const isCompact = width <= 560;
+  const isUltraNarrow = width <= 460;
+
+  const widthClasses = [
+    isNarrow ? "is-narrow" : "",
+    isCompact ? "is-compact" : "",
+    isUltraNarrow ? "is-ultranarrow" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
   // 深色模式变量 (Dark Mode)
   const darkVars = `
       /* 统一配色 - 深色玻璃拟态 */
@@ -175,6 +190,8 @@ export function getBaseTemplate(
     }
     
     .container {
+      container-type: inline-size;
+      container-name: page-container;
       position: relative;
       background-color: var(--card-bg);
       backdrop-filter: blur(24px);
@@ -190,13 +207,25 @@ export function getBaseTemplate(
     .header {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 16px;
       margin-bottom: 28px;
       padding-bottom: 20px;
       border-bottom: 1px solid var(--separator-color);
+      min-width: 0;
+      flex-wrap: nowrap;
     }
     
-    .avatar {
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+    }
+    
+    .avatar, .header-icon-box {
       width: 48px;
       height: 48px;
       background: var(--accent-gradient);
@@ -210,40 +239,130 @@ export function getBaseTemplate(
       flex-shrink: 0;
     }
 
-    .avatar-icon {
+    .avatar-icon, .header-icon {
       width: 24px;
       height: 24px;
       display: block;
     }
     
-    .header-content {
-      flex: 1;
+    .header-content, .header-titles {
       display: flex;
       flex-direction: column;
       justify-content: center;
+      min-width: 0;
+      overflow: hidden;
     }
     
-    .title {
-      font-size: 20px;
+    .title, .header-title {
+      font-size: 22px;
       font-weight: 700;
       color: var(--text-primary);
       letter-spacing: -0.3px;
       line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .header-subtitle {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      margin-top: 3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .header-time {
+      height: 40px;
+      box-sizing: border-box;
+      padding: 0 16px;
+      border-radius: 50px;
+      background: var(--item-bg);
+      border: 1px solid var(--border-color);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .time-icon {
+      width: 14px;
+      height: 14px;
+      display: block;
+      opacity: 0.85;
     }
     
-    /* 用户名标签 - 右侧胶囊样式 */
-    .user-info {
-      font-size: 13px;
+    /* 用户名标签 - 右侧胶囊样式（与 header-time 统一高度与圆角） */
+    .user-info, .user-capsule {
+      height: 40px;
+      box-sizing: border-box;
+      font-size: 14px;
       color: var(--text-secondary);
       font-weight: 500;
       background: var(--item-bg);
-      padding: 6px 14px;
+      padding: 0 16px 0 5px;
       border-radius: 50px;
       border: 1px solid var(--border-color);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      white-space: nowrap;
+      flex-shrink: 0;
+      max-width: 240px;
+    }
+
+    .user-avatar-img {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      object-fit: cover;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      display: block;
+      flex-shrink: 0;
+    }
+
+    .user-avatar-text {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--accent-gradient);
+      color: white;
+      font-weight: 700;
+      font-size: 14px;
       display: flex;
       align-items: center;
-      gap: 6px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      justify-content: center;
+      box-shadow: 0 2px 6px rgba(88, 166, 255, 0.3);
+      flex-shrink: 0;
+    }
+
+    .user-name-text {
+      font-size: 14px;
+      color: var(--text-primary);
+      font-weight: 600;
+      max-width: 150px;
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
     }
     
@@ -262,7 +381,7 @@ export function getBaseTemplate(
       position: absolute;
       bottom: 8px;
       right: 12px;
-      font-size: 11px;
+      font-size: 12px;
       color: var(--text-secondary);
       opacity: 0.6;
     }
@@ -304,14 +423,19 @@ export function getBaseTemplate(
       margin-bottom: 20px;
       text-align: center;
       box-shadow: 0 12px 32px rgba(88, 166, 255, 0.25);
+      min-width: 0;
+      overflow: hidden;
     }
     
     .balance-label {
-      font-size: 13px;
+      font-size: 15px;
       color: rgba(255, 255, 255, 0.85);
       margin-bottom: 8px;
-      font-weight: 500;
+      font-weight: 600;
       letter-spacing: 0.5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     
     .balance-value {
@@ -320,18 +444,35 @@ export function getBaseTemplate(
       color: white;
       margin-bottom: 4px;
       letter-spacing: -1px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
     }
     
     .balance-currency {
-      font-size: 16px;
+      font-size: 18px;
       color: rgba(255, 255, 255, 0.8);
       font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .balance-sublabel {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.75);
+      margin-top: 6px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      letter-spacing: 0.2px;
     }
     
-    /* Grid Layout */
+    /* Grid Layout - 严格两列且防挤压防越界 */
     .grid {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 14px;
       margin-bottom: 20px;
     }
@@ -343,30 +484,39 @@ export function getBaseTemplate(
       border: 1px solid var(--border-color);
       /* 统一阴影，增加立体感 */
       box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      min-width: 0;
+      overflow: hidden;
     }
     
     .grid-item.demand { border-left: 3px solid var(--success-color); }
     .grid-item.fixed { border-left: 3px solid var(--accent-color); }
     .grid-item.cash { border-left: 3px solid var(--warning-color); }
     .grid-item.bank { border-left: 3px solid #a78bfa; }
+    .grid-item.frozen { border-left: 3px solid #f97316; }
     
     .item-header {
       display: flex;
       align-items: center;
       gap: 8px;
       margin-bottom: 12px;
+      min-width: 0;
     }
     
     .item-icon {
       width: 18px;
       height: 18px;
       display: block;
+      flex-shrink: 0;
     }
     
     .item-title {
-      font-size: 13px;
+      font-size: 15px;
       color: var(--text-secondary);
-      font-weight: 500;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
     }
     
     .item-value {
@@ -375,12 +525,21 @@ export function getBaseTemplate(
       color: var(--text-primary);
       margin-bottom: 6px;
       letter-spacing: -0.5px;
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
     }
     
     .item-subtitle {
-      font-size: 12px;
+      font-size: 13px;
       color: var(--text-secondary);
-      opacity: 0.8;
+      opacity: 0.85;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
     }
     
     /* Info Card */
@@ -391,11 +550,14 @@ export function getBaseTemplate(
       margin-bottom: 16px;
       border: 1px solid var(--border-color);
       box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      min-width: 0;
+      overflow: hidden;
     }
     
     .card.success { border-left: 3px solid var(--success-color); }
     .card.info { border-left: 3px solid var(--accent-color); }
     .card.warning { border-left: 3px solid var(--warning-color); }
+    .card.danger { border-left: 3px solid var(--danger-color); }
     
     .info-row {
       display: flex;
@@ -403,6 +565,8 @@ export function getBaseTemplate(
       align-items: center;
       padding: 12px 0;
       border-bottom: 1px solid var(--separator-color);
+      gap: 16px;
+      min-width: 0;
     }
     
     .info-row:last-child {
@@ -415,14 +579,21 @@ export function getBaseTemplate(
     }
     
     .info-label {
-      font-size: 14px;
+      font-size: 15px;
       color: var(--text-secondary);
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     
     .info-value {
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 600;
       color: var(--text-primary);
+      text-align: right;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+      min-width: 0;
+      max-width: 65%;
     }
     
     .info-value.success { color: var(--success-color); }
@@ -432,7 +603,7 @@ export function getBaseTemplate(
     /* Command Grid */
     .cmd-grid {
       display: grid;
-      grid-template-columns: repeat(2, 1fr);
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 20px;
     }
@@ -448,6 +619,7 @@ export function getBaseTemplate(
       display: flex;
       align-items: center;
       gap: 14px;
+      min-width: 0;
     }
     
     .cmd-item:hover {
@@ -466,18 +638,22 @@ export function getBaseTemplate(
     .cmd-content {
       flex: 1;
       min-width: 0;
+      overflow: hidden;
     }
     
     .cmd-name {
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 700;
       color: var(--text-primary);
       margin-bottom: 4px;
       letter-spacing: -0.2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     
     .cmd-desc {
-      font-size: 12px;
+      font-size: 13px;
       color: var(--text-secondary);
       white-space: nowrap;
       overflow: hidden;
@@ -491,6 +667,8 @@ export function getBaseTemplate(
       margin-bottom: 16px;
       border: 1px solid var(--border-color);
       box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      min-width: 0;
+      overflow: hidden;
     }
     
     .prompt-box.info {
@@ -509,16 +687,18 @@ export function getBaseTemplate(
     }
     
     .prompt-title {
-      font-size: 14px;
+      font-size: 16px;
       font-weight: 600;
       color: var(--text-primary);
       margin-bottom: 6px;
+      word-break: break-word;
     }
     
     .prompt-message {
-      font-size: 13px;
+      font-size: 14px;
       color: var(--text-secondary);
-      line-height: 1.5;
+      line-height: 1.6;
+      word-break: break-word;
     }
     
     /* Confirm Dialog */
@@ -529,21 +709,27 @@ export function getBaseTemplate(
       margin-bottom: 16px;
       border: 1px solid var(--border-color);
       box-shadow: 0 4px 12px var(--shadow-color);
+      min-width: 0;
+      overflow: hidden;
     }
     
     .confirm-title {
-      font-size: 16px;
+      font-size: 18px;
       font-weight: 600;
       color: var(--text-primary);
       margin-bottom: 16px;
       text-align: center;
+      word-break: break-word;
     }
     
     .confirm-row {
       display: flex;
       justify-content: space-between;
-      padding: 10px 0;
+      align-items: center;
+      padding: 12px 0;
       border-bottom: 1px solid var(--separator-color);
+      gap: 16px;
+      min-width: 0;
     }
     
     .confirm-row:last-child {
@@ -551,14 +737,21 @@ export function getBaseTemplate(
     }
     
     .confirm-label {
-      font-size: 14px;
+      font-size: 15px;
       color: var(--text-secondary);
+      white-space: nowrap;
+      flex-shrink: 0;
     }
     
     .confirm-value {
-      font-size: 14px;
+      font-size: 16px;
       font-weight: 600;
       color: var(--text-primary);
+      text-align: right;
+      word-break: break-all;
+      overflow-wrap: anywhere;
+      min-width: 0;
+      max-width: 65%;
     }
     
     .confirm-hint {
@@ -567,8 +760,9 @@ export function getBaseTemplate(
       background: rgba(88, 166, 255, 0.1);
       border-radius: 8px;
       text-align: center;
-      font-size: 13px;
+      font-size: 14px;
       color: var(--accent-color);
+      word-break: break-word;
     }
     
     /* List Item */
@@ -582,42 +776,58 @@ export function getBaseTemplate(
       align-items: center;
       border: 1px solid var(--border-color);
       box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+      min-width: 0;
+      overflow: hidden;
+      gap: 12px;
     }
     
     .list-left {
       flex: 1;
+      min-width: 0;
+      overflow: hidden;
     }
     
     .list-title {
-      font-size: 15px;
+      font-size: 16px;
       font-weight: 600;
       color: var(--text-primary);
       margin-bottom: 4px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     
     .list-subtitle {
-      font-size: 12px;
+      font-size: 13px;
       color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     
     .list-right {
       text-align: right;
+      flex-shrink: 0;
     }
     
     .list-amount {
-      font-size: 17px;
+      font-size: 18px;
       font-weight: 700;
       color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     
     .list-status {
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 600;
-      padding: 3px 8px;
-      border-radius: 4px;
+      padding: 4px 10px;
+      border-radius: 6px;
       margin-top: 4px;
       display: inline-block;
       text-transform: uppercase;
+      white-space: nowrap;
     }
     
     .list-status.active {
@@ -630,6 +840,90 @@ export function getBaseTemplate(
       color: var(--accent-color);
     }
 
+    /* Help Card Styles (Large & High Contrast) */
+    .help-card {
+      background: var(--item-bg);
+      border-radius: 14px;
+      padding: 18px 22px;
+      margin-bottom: 14px;
+      border: 1px solid var(--border-color);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+      border-left: 4px solid var(--accent-color);
+      min-width: 0;
+      overflow: hidden;
+    }
+    
+    .help-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    
+    .help-cmd-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      flex-shrink: 1;
+    }
+    
+    .help-cmd-name {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text-primary);
+      letter-spacing: -0.3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    
+    .help-cmd-badge {
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 6px;
+      background: rgba(88, 166, 255, 0.15);
+      color: var(--accent-color);
+      text-transform: uppercase;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    
+    .help-cmd-syntax {
+      font-size: 15px;
+      font-family: 'Roboto Mono', monospace;
+      color: var(--accent-color);
+      background: rgba(88, 166, 255, 0.1);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 400px;
+      flex-shrink: 0;
+    }
+    
+    .help-cmd-desc {
+      font-size: 16px;
+      color: var(--text-primary);
+      margin-top: 10px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    
+    .help-cmd-options {
+      font-size: 14px;
+      color: var(--text-secondary);
+      opacity: 0.85;
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dashed var(--separator-color);
+      word-break: break-word;
+    }
+
     .icon-fallback {
       display: inline-flex;
       align-items: center;
@@ -637,9 +931,115 @@ export function getBaseTemplate(
       color: var(--text-secondary);
       font-size: 14px;
     }
+
+    /* ========================================================= */
+    /* 响应式排版与页头防重叠：过窄时自动隐藏部分页头内容            */
+    /* ========================================================= */
+
+    /* 1. 紧凑模式 (width <= 560px 或容器 <= 480px)：减少内边距 */
+    body.is-compact {
+      padding: 20px;
+    }
+    .is-compact .container {
+      padding: 20px;
+    }
+
+    /* 2. 较窄模式 (width <= 680px 或容器 <= 600px)：自动隐藏时间徽章与副标题 */
+    .is-narrow .header-time,
+    .is-narrow .header-subtitle {
+      display: none !important;
+    }
+
+    @container page-container (max-width: 600px) {
+      .header-time,
+      .header-subtitle {
+        display: none !important;
+      }
+    }
+
+    /* 3. 紧凑模式 (width <= 560px 或容器 <= 460px)：用户名折叠，仅保留头像圆胶囊 */
+    .is-compact .user-avatar-img ~ .user-name-text,
+    .is-compact .user-avatar-text ~ .user-name-text {
+      display: none !important;
+    }
+    .is-compact .user-capsule {
+      width: 40px !important;
+      height: 40px !important;
+      padding: 0 !important;
+      justify-content: center !important;
+      border-radius: 50% !important;
+      box-sizing: border-box !important;
+      flex-shrink: 0 !important;
+    }
+
+    @container page-container (max-width: 460px) {
+      .user-avatar-img ~ .user-name-text,
+      .user-avatar-text ~ .user-name-text {
+        display: none !important;
+      }
+      .user-capsule {
+        width: 40px !important;
+        height: 40px !important;
+        padding: 0 !important;
+        justify-content: center !important;
+        border-radius: 50% !important;
+        box-sizing: border-box !important;
+        flex-shrink: 0 !important;
+      }
+    }
+
+    /* 4. 极窄模式 (width <= 460px 或容器 <= 380px)：缩减图标与主标题 */
+    .is-ultranarrow .header-icon-box {
+      width: 38px !important;
+      height: 38px !important;
+      border-radius: 10px !important;
+    }
+    .is-ultranarrow .header-icon {
+      width: 20px !important;
+      height: 20px !important;
+    }
+    .is-ultranarrow .header-title {
+      font-size: 18px !important;
+    }
+
+    @container page-container (max-width: 380px) {
+      .header-icon-box {
+        width: 38px !important;
+        height: 38px !important;
+        border-radius: 10px !important;
+      }
+      .header-icon {
+        width: 20px !important;
+        height: 20px !important;
+      }
+      .header-title {
+        font-size: 18px !important;
+      }
+    }
+
+    /* 5. 补充针对小屏幕视口的媒体查询 */
+    @media (max-width: 680px) {
+      .header-time,
+      .header-subtitle {
+        display: none !important;
+      }
+    }
+    @media (max-width: 560px) {
+      .user-avatar-img ~ .user-name-text,
+      .user-avatar-text ~ .user-name-text {
+        display: none !important;
+      }
+      .user-capsule {
+        width: 40px !important;
+        height: 40px !important;
+        padding: 0 !important;
+        justify-content: center !important;
+        border-radius: 50% !important;
+      }
+    }
   </style>
 </head>
-<body>
+<body class="${widthClasses}">
   <div class="container">
     ${content}
     <div class="footer">Powered by Koishi Monetary Bank</div>
@@ -649,60 +1049,168 @@ export function getBaseTemplate(
   `;
 }
 
+export interface HeaderConfig {
+  showAvatar?: boolean;
+  showUsername?: boolean;
+  bankTitle?: string;
+  showTime?: boolean;
+}
+
+export interface NumberFormatOptions {
+  /** 格式化单位：auto(超长自动缩写), zh(千/万/亿), en(K/M/B/T), none(不缩写) */
+  unit?: "none" | "zh" | "en" | "auto";
+  /** 自动缩写触发阈值，默认 10,000,000 */
+  threshold?: number;
+  /** 小数点后保留位数，默认 2 */
+  precision?: number;
+}
+
 /**
- * 页面头部
+ * 格式化存款与金额数字，预防极端大数导致溢出换行
+ */
+export function formatAmount(
+  val: number | string | undefined | null,
+  options?: NumberFormatOptions,
+): string {
+  if (val === undefined || val === null) return "0";
+  if (typeof val === "string") {
+    const num = Number(val);
+    if (isNaN(num)) return val;
+    val = num;
+  }
+
+  const unit = options?.unit || "auto";
+  const threshold = options?.threshold ?? 10000000;
+  const precision = options?.precision ?? 2;
+
+  const abs = Math.abs(val);
+  const sign = val < 0 ? "-" : "";
+
+  // 1. 不缩写
+  if (unit === "none") {
+    return val.toLocaleString();
+  }
+
+  // 2. 自动判断：未超阈值时显示标准千分位
+  if (unit === "auto" && abs < threshold) {
+    return val.toLocaleString();
+  }
+
+  // 3. 英文缩写 (K/M/B/T)
+  if (unit === "en") {
+    if (abs >= 1e12) return `${sign}${(abs / 1e12).toFixed(precision).replace(/\.?0+$/, "")}T`;
+    if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(precision).replace(/\.?0+$/, "")}B`;
+    if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(precision).replace(/\.?0+$/, "")}M`;
+    if (abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(precision).replace(/\.?0+$/, "")}K`;
+    return val.toLocaleString();
+  }
+
+  // 4. 中文单位（千/万/亿/兆）
+  if (unit === "zh" || unit === "auto") {
+    if (abs >= 1e12) return `${sign}${(abs / 1e12).toFixed(precision).replace(/\.?0+$/, "")}兆`;
+    if (abs >= 1e8) return `${sign}${(abs / 1e8).toFixed(precision).replace(/\.?0+$/, "")}亿`;
+    if (abs >= 1e4) return `${sign}${(abs / 1e4).toFixed(precision).replace(/\.?0+$/, "")}万`;
+    if (unit === "zh" && abs >= 1e3) return `${sign}${(abs / 1e3).toFixed(precision).replace(/\.?0+$/, "")}千`;
+    return val.toLocaleString();
+  }
+
+  return val.toLocaleString();
+}
+
+/**
+ * 页面头部（支持配置、头像与标题分离、时间组件高度圆角统一）
  */
 export function renderHeader(
   icon: string,
   title: string,
   username: string,
+  avatarUrl?: string,
+  headerConfig?: HeaderConfig,
 ): string {
+  const showAvatar = headerConfig?.showAvatar !== false;
+  const showUsername = headerConfig?.showUsername !== false;
+  const bankTitle = headerConfig?.bankTitle || "MONETARY BANK";
+  const showTime = headerConfig?.showTime === true;
+
+  const initial = (username || "U").trim().substring(0, 1).toUpperCase();
+  const avatarHtml = avatarUrl
+    ? `<img class="user-avatar-img" src="${avatarUrl}" alt="${username} 头像" onerror="this.outerHTML='<div class=\\'user-avatar-text\\'>${initial}</div>'" />`
+    : `<div class="user-avatar-text">${initial}</div>`;
+
+  const timeHtml = showTime
+    ? `<div class="header-time">${renderIcon("clock", "time-icon", "时间")}<span>${new Date().toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" })}</span></div>`
+    : "";
+
+  const userHtml =
+    showAvatar || showUsername
+      ? `
+    <div class="user-capsule" title="${username}">
+      ${showAvatar ? avatarHtml : ""}
+      ${showUsername ? `<span class="user-name-text">${username}</span>` : ""}
+    </div>
+  `
+      : "";
+
   return `
     <div class="header">
-      <div class="avatar">${renderIcon(icon, "avatar-icon", `${title} 图标`)}</div>
-      <div class="header-content">
-        <div class="title">${title}</div>
+      <div class="header-left">
+        <div class="header-icon-box">${renderIcon(icon, "header-icon", `${title} 图标`)}</div>
+        <div class="header-titles">
+          <div class="header-title">${title}</div>
+          <div class="header-subtitle">${bankTitle}</div>
+        </div>
       </div>
-      <div class="user-info">${username}</div>
+      <div class="header-right">
+        ${timeHtml}
+        ${userHtml}
+      </div>
     </div>
   `;
 }
 
 /**
- * 余额卡片（大标题样式）
+ * 余额卡片（大标题样式，支持数字缩写与副标题）
  */
 export function renderBalanceCard(
   label: string,
-  value: number,
+  value: number | string,
   currency: string,
+  subLabel?: string,
+  options?: NumberFormatOptions,
 ): string {
+  const formattedValue = typeof value === "number" ? formatAmount(value, options) : value;
+  const rawTitle = typeof value === "number" ? value.toLocaleString() : value;
   return `
     <div class="balance-section">
       <div class="balance-label">${label}</div>
-      <div class="balance-value">${value.toLocaleString()}</div>
+      <div class="balance-value" title="${rawTitle}">${formattedValue}</div>
       <div class="balance-currency">${currency}</div>
+      ${subLabel ? `<div class="balance-sublabel">${subLabel}</div>` : ""}
     </div>
   `;
 }
 
 /**
- * 网格项
+ * 网格项（支持数字缩写与极端文本防溢出）
  */
 export function renderGridItem(
   icon: string,
   title: string,
-  value: number,
+  value: number | string,
   subtitle: string,
-  type: "demand" | "fixed" | "cash" | "bank",
+  type: "demand" | "fixed" | "cash" | "bank" | "frozen",
+  options?: NumberFormatOptions,
 ): string {
+  const formattedValue = typeof value === "number" ? formatAmount(value, options) : value;
+  const rawTitle = typeof value === "number" ? value.toLocaleString() : value;
   return `
     <div class="grid-item ${type}">
       <div class="item-header">
         ${renderIcon(icon, "item-icon", `${title} 图标`)}
         <span class="item-title">${title}</span>
       </div>
-      <div class="item-value">${value.toLocaleString()}</div>
-      <div class="item-subtitle">${subtitle}</div>
+      <div class="item-value" title="${rawTitle}">${formattedValue}</div>
+      <div class="item-subtitle" title="${subtitle}">${subtitle}</div>
     </div>
   `;
 }
@@ -713,7 +1221,7 @@ export function renderGridItem(
 export function renderInfoRow(
   label: string,
   value: string,
-  valueClass: "" | "success" | "error" = "",
+  valueClass: "" | "success" | "error" | "highlight" = "",
 ): string {
   return `
     <div class="info-row">
@@ -787,4 +1295,37 @@ export function renderConfirmDialog(
       <div class="confirm-hint">请回复 yes 或 y 确认，其他内容取消</div>
     </div>
   `;
+}
+
+export interface HelpCommandItem {
+  name: string;
+  syntax: string;
+  desc: string;
+  options?: string;
+  category?: string;
+}
+
+/**
+ * 渲染大字号、高可读性的命令列表
+ */
+export function renderHelpList(commands: HelpCommandItem[]): string {
+  const items = commands
+    .map(
+      (cmd) => `
+    <div class="help-card">
+      <div class="help-card-header">
+        <div class="help-cmd-left">
+          <span class="help-cmd-name">${cmd.name}</span>
+          ${cmd.category ? `<span class="help-cmd-badge">${cmd.category}</span>` : ""}
+        </div>
+        <span class="help-cmd-syntax">${cmd.syntax}</span>
+      </div>
+      <div class="help-cmd-desc">${cmd.desc}</div>
+      ${cmd.options ? `<div class="help-cmd-options">${cmd.options}</div>` : ""}
+    </div>
+  `,
+    )
+    .join("");
+
+  return `<div class="help-list">${items}</div>`;
 }
