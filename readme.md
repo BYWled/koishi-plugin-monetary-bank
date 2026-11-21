@@ -221,6 +221,10 @@ renderHelpList(commands: HelpCommandItem[]): string
 
 // 金额缩写（万/亿、K/M/B/T）
 formatAmount(value: number, numOpt?: NumberFormatOptions): string
+
+// 图标（内联 SVG，构建期由 assets/icons/*.svg 生成到 icons.generated.ts，
+// 运行时零文件依赖；改图标后重跑 node tools/generate-icons.cjs）
+renderIcon(icon: string, className: string, alt: string): string
 ```
 
 ### 降级策略

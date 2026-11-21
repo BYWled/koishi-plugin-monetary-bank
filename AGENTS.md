@@ -98,7 +98,9 @@
 | 转账解析/费率/信用分 | src/utils/transfer.ts |
 | 时长格式化 | src/utils/format.ts |
 | 日志与调试开关 | src/utils/log.ts |
-| HTML 组件/图标/样式外壳 | src/templates/{components,assets,theme,shell,base}.ts |
+| HTML 组件/样式外壳 | src/templates/{components,theme,shell,base}.ts |
+| 图标内联 SVG（生成产物） | src/templates/icons.generated.ts + src/templates/assets.ts |
+| 图标再生成工具 | tools/generate-icons.cjs（改 assets/icons/*.svg 后重跑） |
 
 ## 数据库表结构
 
