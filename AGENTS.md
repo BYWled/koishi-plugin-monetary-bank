@@ -4,9 +4,9 @@
 
 ## 项目速查
 
-- **插件名**: `koishi-plugin-monetary-bank` v2.2.0
-- **入口**: `src/index.ts`（1705 行，全部业务逻辑）+ `src/templates.ts`（791 行，UI 模板）
-- **编译**: `tsc`，产物提交到 `lib/`（无构建脚本）
+- **插件名**: `koishi-plugin-monetary-bank` v2.3.0-Alpha.1（2.3.0 起代码模块化拆分）
+- **入口**: `src/index.ts`（入口装配：Config Schema + apply 装配），业务按域拆分至 services/render/database/types/commands/*、utils/*、templates/*
+- **编译**: `yarn build monetary-bank`（koishi 根目录，yakumo），产物输出 `lib/`
 - **服务**: 提供 `monetaryBank` 服务（MonetaryBankAPI）
 - **依赖**: `database`（必需）、`monetary`（必需，通过数据库直读）、`puppeteer`（可选，降级为文本）
 
@@ -44,29 +44,28 @@
 
 #### 需要新增数据库字段时
 
-1. 在 `initDatabase()` 函数中的 `ctx.model.extend('monetary_bank_int', {...})` 添加字段
-2. 在 `MonetaryBankInterest` 接口（line 246-258）添加对应属性
+1. 在 `src/database.ts` 的 `ctx.model.extend('monetary_bank_int', {...})` 添加字段
+2. 在 `src/types.ts` 的 `MonetaryBankInterest` 接口添加对应属性
 3. 检查 `monetary-bourse` 是否需要同步更新
 
 #### 需要新增命令时
 
-1. 在 `apply()` 函数末尾添加 `.subcommand()` 注册
+1. 在对应业务域的 `src/commands/*.ts` 中添加 `.subcommand()` 注册；新域则新建 `commands/*.ts` 并在 `index.ts` 的 `apply()` 中挂接
 2. 使用 `.userFields(['id'])` 获取用户数字 ID
 3. 涉及金额操作时提供 `-y` 选项跳过确认
-4. 视觉输出调用 `renderToImage(html, fallbackText)`
+4. 视觉输出调用 `render.renderToImage(html, fallbackText)`（工厂已内含渲染超时与页面兜底关闭）
 
 ### 阶段三：验证与测试
 
-**本项目无自动化测试。** 验证方式：
+**自动化测试**（2.3.0 起提供，均在 koishi 根目录运行 `node -r esbuild-register <文件>`）：
 
-1. **编译检查**: 运行 `tsc --noEmit` 确认无类型错误
-2. **逻辑走查**: 手动检查以下关键路径：
-   - 存款 → monetary 表扣款 → monetary_bank_int 创建 demand 记录
-   - 取款 → 遍历 demand 记录（按 settlementDate 升序）→ monetary 表加款
-   - 定期存款 → 扣款（现金优先，不足扣活期）→ 创建 fixed 记录
-   - 利息结算 → 午夜触发 → 按类型分别计算 → 合并碎片记录
-3. **降级测试**: 确认所有渲染函数的 `fallbackText` 参数不为空
-4. **跨插件检查**: 如果修改了表结构，验证 bourse 插件的类型定义是否兼容
+1. **编译检查**: `npx tsc --noEmit -p external/monetary-bank/tsconfig.json` + `yarn build monetary-bank`
+2. **API 全覆盖**: `external/monetary-bank/test-api.ts`（32 断言：7 个开放 API、冻结/抵债/转账入参覆盖/异常路径）
+3. **文本降级+配置矩阵**: `external/monetary-bank/test-text.ts`（无 puppeteer 环境全指令文本回退、信用分拦截、maxFee/tiered、定期全流程）
+4. **沙盒人工矩阵**: 浏览器沙盒跑图片模式全指令 + 配置项逐项验证（themeMode/header/numberFormat/maxFee/tiered/creditCheck）
+5. **逻辑走查**: 关键路径同旧版：存款扣现金→建 demand 记录；取款按 settlementDate 升序扣活期→加现金；定期现金优先不足扣活期；利息午夜触发按类型结算→合并碎片
+6. **降级测试**: 确认 `src/render.ts` 所有渲染函数的 `fallbackText` 不为空
+7. **跨插件检查**: 修改表结构时验证 bourse 的 `MonetaryBankInterest` 类型定义兼容；公共导出面（`index.ts` re-export）不得破坏
 
 ### 阶段四：发布前文档
 
@@ -74,23 +73,32 @@
 
 1. **CHANGELOG.md**: 在顶部添加新版本条目，格式遵循现有模式
 2. **package.json**: 如需发布，更新 `version` 字段
-3. **编译**: 运行 `tsc` 更新 `lib/` 产物
-4. **Koishi 编译**: 在插件所在的 koishi 根目录运行 `npm run build monetary-bank` 更新 `lib/` 产物
+3. **编译**: 在 koishi 根目录运行 `npm run build monetary-bank` 更新 `lib/` 产物
+4. **发布预检**: 确认 package.json 版本携带 Alpha 后缀（预览版走 `publishConfig.tag: alpha`，严禁以稳定版本号发布预览内容）
 5. **readme.md**: 如有新功能或配置变更，更新对应章节
 
 ## 关键代码位置速查
 
-| 功能 | 文件 | 大约行号 |
-|---|---|---|
-| Config 接口 + Schema | index.ts | 7-63 |
-| MonetaryBankAPI 类 | index.ts | 115-239 |
-| MonetaryBankInterest 接口 | index.ts | 246-258 |
-| 数据库初始化 | index.ts | 276-345 |
-| monetary 表操作函数 | index.ts | 352-461 |
-| 利息结算调度器 | index.ts | 501-621 |
-| 记录合并优化 | index.ts | 626-703 |
-| 命令注册 + 业务逻辑 | index.ts | 730-1705 |
-| HTML 模板函数 | templates.ts | 全文 |
+| 功能 | 文件 |
+|---|---|
+| 入口装配 + Config Schema | src/index.ts |
+| 公共类型/表结构声明 | src/types.ts |
+| MonetaryBankAPI（7+ API） | src/services.ts |
+| 数据库初始化 | src/database.ts |
+| 页面渲染工厂 + 文本降级 | src/render.ts |
+| 银行首页/明细指令 | src/commands/bank.ts |
+| 存取款指令 | src/commands/deposit.ts |
+| 转账指令 | src/commands/transfer.ts |
+| 定期申请/管理指令 | src/commands/fixed.ts |
+| 帮助指令 | src/commands/help.ts |
+| monetary 表操作 | src/utils/monetary.ts |
+| 冻结/解冻 | src/utils/freeze.ts |
+| 利息结算/合并 | src/utils/interest.ts |
+| 结算日期算法 | src/utils/time.ts |
+| 转账解析/费率/信用分 | src/utils/transfer.ts |
+| 时长格式化 | src/utils/format.ts |
+| 日志与调试开关 | src/utils/log.ts |
+| HTML 组件/图标/样式外壳 | src/templates/{components,assets,theme,shell,base}.ts |
 
 ## 数据库表结构
 
@@ -101,6 +109,15 @@ id: unsigned (PK)  |  uid: unsigned  |  currency: string  |  amount: double
 type: 'demand'|'fixed'  |  rate: double  |  cycle: 'day'|'week'|'month'
 settlementDate: timestamp  |  extendRequested: boolean
 nextRate: double?  |  nextCycle: string?
+```
+
+### `monetary_bank_freeze`（2.3.0 新增，本插件创建）
+
+```
+id: unsigned (PK)  |  uid: unsigned  |  currency: string  |  amount: double
+sourceType: 'demand'|'fixed'  |  sourceRecordId: unsigned?（冻结来源记录 id；转账冻结恒为 null）
+senderUid: unsigned?（转账付款方 uid，供首页"转出在途"展示）  |  accrual: boolean（可否结息）
+reason: string  |  frozenAt: timestamp  |  unfreezeAt: timestamp?  |  status: 'frozen'|'unfrozen'|'forfeited'
 ```
 
 ### `monetary`（外部，koishi-plugin-monetary）

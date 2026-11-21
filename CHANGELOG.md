@@ -4,6 +4,9 @@
 
 ## [2.3.0-Alpha.1]
 
+### 🧹 Code Refactoring
+- **structure (模块化拆分)**: 2.3.0 起源码按 monetary-bourse 规范模块化——`index.ts`（入口装配）+ `types.ts`（公共类型/表声明）+ `services.ts`（MonetaryBankAPI）+ `database.ts` + `render.ts`（渲染工厂）+ `commands/{bank,deposit,transfer,fixed,help}.ts`（按域注册）+ `utils/{monetary,freeze,interest,time,transfer,format,log}.ts` + `templates/`（assets/theme/shell/base/components）；公共导出面与 `monetaryBank` 服务行为不变。
+
 ### 🐛 Bug Fixes
 - **transfer (目标解析)**: `resolveTargetUid` 绑定查询增加 `platform` 严格过滤（与 koishi core `getUser` 的解析语义一致），不再回退到其他平台/历史会话的同名绑定；当前平台未匹配时直接走免开户自动建档，杜绝向"幽灵账户"转账。
 - **freeze (表结构)**: `monetary_bank_freeze` 新增 `senderUid` 列记录转账付款方 uid，`sourceRecordId` 回归纯粹的"冻结来源记录 id"语义（转账冻结恒为 `null`）；付款方首页"转出在途冻结"改按 `senderUid` 匹配，消除与 API 冻结记录 id 撞号的误显。
@@ -39,6 +42,7 @@
   - **窄屏自动降级折叠保护**：新增多级自适应防重叠机制（基于容器查询 `@container`、类选择器与媒体查询），在模板渲染宽度过窄时（如 520px 确认/成功弹窗等紧凑页面）：
     - 宽度 <= 680px：自动隐藏时间徽章（`.header-time`）与装饰性英文副标题（`.header-subtitle`）。
     - 宽度 <= 560px：自动将用户信息胶囊中的文本折叠，仅保留 40x40 纯圆形头像胶囊（同时挂载 `title` 提示），减少内边距为标题提供充裕排版空间，彻底根绝页头内容相互碰撞与重叠错位。
+- **render (渲染健壮性)**: `renderToImage` 渲染加 20 秒超时兜底，页面关闭移入 `finally`——渲染异常不再泄漏 puppeteer 页面导致后续渲染永久挂死。
 - **bank (银行首页资产排布优化)**: 首页常态化展示所有可能的数据资产项（包含总资产、活期存款、定期资产、现金余额、冻结资金及钱包总身家），严格确保**定期存款与活期存款置于首行并列展示**，现金与冻结资金置于第二行，彻底避免卡片落单或缺损。
 - **transfer (收款人昵称显示)**: 通过数字 ID/平台号转账时自动解析收款人昵称（优先 `user.name` 平台昵称，其次当前平台绑定 `pid`），确认页/成功页/交互提示统一展示昵称而非裸 ID。
 - **typography (字体与层级显著增大)**: 全面拔高移动端查图字体尺寸，小字副标题/参数/提示从 11-13px 提升至 13-16px，指令大标题提升至 24px，消除缩放查图痛点。
