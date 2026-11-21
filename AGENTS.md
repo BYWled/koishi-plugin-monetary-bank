@@ -4,7 +4,7 @@
 
 ## 项目速查
 
-- **插件名**: `koishi-plugin-monetary-bank` v2.3.0-Alpha.1（2.3.0 起代码模块化拆分）
+- **插件名**: `koishi-plugin-monetary-bank` v3.0.0-Alpha.1（3.0.0 起代码模块化拆分）
 - **入口**: `src/index.ts`（入口装配：Config Schema + apply 装配），业务按域拆分至 services/render/database/types/commands/*、utils/*、templates/*
 - **编译**: `yarn build monetary-bank`（koishi 根目录，yakumo），产物输出 `lib/`
 - **服务**: 提供 `monetaryBank` 服务（MonetaryBankAPI）

@@ -2,7 +2,7 @@
 
 本项目的所有关键更改都将记录在此文件中。
 
-## [2.3.0-Alpha.1]
+## [3.0.0-Alpha.1]
 
 ### 🧹 Code Refactoring
 - **structure (模块化拆分)**: 2.3.0 起源码按 monetary-bourse 规范模块化——`index.ts`（入口装配）+ `types.ts`（公共类型/表声明）+ `services.ts`（MonetaryBankAPI）+ `database.ts` + `render.ts`（渲染工厂）+ `commands/{bank,deposit,transfer,fixed,help}.ts`（按域注册）+ `utils/{monetary,freeze,interest,time,transfer,format,log}.ts` + `templates/`（assets/theme/shell/base/components）；公共导出面与 `monetaryBank` 服务行为不变。
