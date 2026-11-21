@@ -2,6 +2,14 @@
 
 本项目的所有关键更改都将记录在此文件中。
 
+## [3.0.0-Alpha.2]
+
+### 🐛 Bug Fixes
+- **icons (线上图标坏图)**: 图标不再依赖文件系统与 `file://` URL——构建期将 `assets/icons/*.svg` 内联生成至 `src/templates/icons.generated.ts`，`renderIcon` 直接输出内联 SVG。此前生产环境 assets 缺失或被安全策略拦截时，图标回退为 `file://` URL 被 puppeteer 页面拒绝加载，全部显示为坏图。
+
+### 💄 UI/UX (界面与交互)
+- **icons (视觉优化)**: 内联 SVG 剥离各图标自带的 64×64 通宽底色矩形，仅保留主图形——消除与容器背景叠加形成的双层底色，图标观感更大更干净。
+
 ## [3.0.0-Alpha.1]
 
 ### 🧹 Code Refactoring
